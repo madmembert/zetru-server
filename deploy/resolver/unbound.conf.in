@@ -1,0 +1,68 @@
+# Unbound configuration for the Zetru resolver (concept §3.2, docs/server-internal-api.md).
+# Recursive, DNSSEC-validating, QNAME minimisation, no forwarders. Only the analyzer, on the
+# internal "dns" network (@DNS_SUBNET@), may query it. Rendered by entrypoint.sh at start.
+
+server:
+    # --- process ---
+    username: ""                 # already running as uid 10004; no privilege drop needed
+    chroot: ""
+    directory: "/run/unbound"
+    pidfile: "/run/unbound/unbound.pid"
+    use-syslog: no
+    logfile: ""                  # stderr, captured by Docker with a size cap
+    verbosity: 0
+    log-queries: no              # never log query names (they derive from mail content)
+    log-replies: no
+    log-servfail: no
+    num-threads: 1
+
+    # --- network ---
+    interface: 0.0.0.0
+    port: 53
+    do-ip4: yes
+    do-ip6: no
+    do-udp: yes
+    do-tcp: yes
+    access-control: 0.0.0.0/0 refuse
+    access-control: 127.0.0.0/8 allow          # container healthcheck
+    access-control: @DNS_SUBNET@ allow         # the internal dns network (analyzer)
+
+    # --- recursion and DNSSEC ---
+    module-config: "validator iterator"
+    auto-trust-anchor-file: "/run/unbound/root.key"
+    qname-minimisation: yes
+    qname-minimisation-strict: no
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-below-nxdomain: yes
+    harden-referral-path: no
+    harden-algo-downgrade: yes
+    aggressive-nsec: yes
+    val-clean-additional: yes
+    use-caps-for-id: no
+    deny-any: yes
+    minimal-responses: yes
+    prefetch: yes
+    hide-identity: yes
+    hide-version: yes
+    hide-trustanchor: yes
+    # DNS rebinding protection: answers may not point into private ranges.
+    private-address: 10.0.0.0/8
+    private-address: 172.16.0.0/12
+    private-address: 192.168.0.0/16
+    private-address: 169.254.0.0/16
+    private-address: 100.64.0.0/10
+    private-address: fd00::/8
+    private-address: fe80::/10
+
+    # --- resources (192 MB container) ---
+    msg-cache-size: 16m
+    rrset-cache-size: 32m
+    key-cache-size: 8m
+    neg-cache-size: 4m
+    outgoing-range: 512
+    num-queries-per-thread: 256
+
+remote-control:
+    control-enable: no
+# No forward-zone: Unbound resolves from the root itself.
