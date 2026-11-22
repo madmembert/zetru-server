@@ -1,0 +1,10 @@
+{
+  "id": "zetru-esp-click-trackers",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "notes": ["Click-tracking hosts of e-mail service providers. Their links legitimately show a different domain in the link text, so they are exempt from the text/target mismatch flag in the canonical state. Host equals an entry or is a subdomain of it."],
+  "hosts": [
+    "list-manage.com", "mailchi.mp", "mandrillapp.com", "ct.sendgrid.net", "rs6.net", "awstrack.me", "exct.net", "klclick.com", "klclick1.com", "createsend1.com", "cmail19.com", "cmail20.com", "mlsend.com", "hubspotlinks.com", "hs-sites.com", "sendibt2.com", "sendibt3.com", "sendibm1.com", "mailjet.com", "mjt.lu", "mailgun.org", "cleverreach.com", "rapidmail.de", "newsletter2go.com", "e.customeriomail.com", "convertkit-mail.com", "convertkit-mail2.com"
+  ],
+  "review": ["hubspotlinks.com, sendibt2/3.com, sendibm1.com, klclick1.com, cmail19/20.com, convertkit-mail*.com, e.customeriomail.com believed tracker hosts; verify against real samples. Wrong entries only remove a state flag, they never raise trust."]
+}

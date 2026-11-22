@@ -1,0 +1,35 @@
+From: "HR" <hr@personal-beispiel.example>
+To: anna@example.de
+Subject: Gehaltsabrechnung November
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <11@personal-beispiel.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============6588588062285910073=="
+
+--===============6588588062285910073==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hallo,
+
+anbei die Gehaltsabrechnung f=C3=BCr November. Bitte aktivieren Sie die Bearb=
+eitung, damit alle Inhalte richtig angezeigt werden.
+
+Viele Gr=C3=BC=C3=9Fe aus der Personalabteilung
+
+--===============6588588062285910073==
+Content-Type: application/vnd.ms-word.document.macroEnabled.12
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Abrechnung_November.docm"
+MIME-Version: 1.0
+
+UEsDBBQAAAAAAMBLdF3HHBc8CAAAAAgAAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbDxUeXBlcy8+
+UEsDBBQAAAAAAMBLdF3dWoYNDQAAAA0AAAARAAAAd29yZC9kb2N1bWVudC54bWw8dzpkb2N1bWVu
+dC8+UEsDBBQAAAAAAMBLdF3uw1YcJQAAACUAAAATAAAAd29yZC92YmFQcm9qZWN0LmJpbmR1bW15
+IG1hY3JvIHByb2plY3QgKGluZXJ0IHRlc3QgZGF0YSlQSwECFAMUAAAAAADAS3RdxxwXPAgAAAAI
+AAAAEwAAAAAAAAAAAAAAgAEAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUAxQAAAAAAMBLdF3d
+WoYNDQAAAA0AAAARAAAAAAAAAAAAAACAATkAAAB3b3JkL2RvY3VtZW50LnhtbFBLAQIUAxQAAAAA
+AMBLdF3uw1YcJQAAACUAAAATAAAAAAAAAAAAAACAAXUAAAB3b3JkL3ZiYVByb2plY3QuYmluUEsF
+BgAAAAADAAMAwQAAAMsAAAAAAA==
+
+--===============6588588062285910073==--

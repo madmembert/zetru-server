@@ -1,0 +1,22 @@
+{
+  "notes": "Look-alike sender (digit 1 for l), brand display name, link text shows paypal.com, new domain.",
+  "broker": {
+    "ages": {
+      "paypa1-sicherheit.com": 6
+    }
+  },
+  "expect": [
+    "ID_LOOKALIKE_BRAND",
+    "ID_BRAND_NOT_OFFICIAL",
+    "LINK_LOOKALIKE",
+    "ID_DOMAIN_NEW",
+    "CLS_ASKS_CREDENTIALS",
+    "CLS_CAT_PHISHING",
+    "CLS_URGENCY",
+    "CLS_IMPERSONATION"
+  ],
+  "forbid": [
+    "MIME_HIDDEN_TEXT",
+    "CLS_ABSTAIN"
+  ]
+}

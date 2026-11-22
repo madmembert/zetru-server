@@ -1,0 +1,11 @@
+{
+  "id": "zetru-dangerous-extensions",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "executable": ["exe", "scr", "com", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "lnk", "msi", "msp", "msix", "appx", "appxbundle", "jar", "apk", "ipa", "dmg", "pkg", "iso", "img", "vhd", "vhdx", "one", "reg", "chm", "cpl", "mobileconfig", "pif", "application", "gadget", "inf", "sct", "url", "library-ms", "settingcontent-ms", "xll", "ppa", "ppam", "xlam", "scf", "app", "command", "sh", "run", "wiz", "ws", "diagcab", "appref-ms"],
+  "macro_office": ["docm", "dotm", "xlsm", "xltm", "xlsb", "pptm", "potm", "ppsm", "sldm"],
+  "archive": ["zip", "rar", "7z", "gz", "tgz", "tar", "bz2", "tbz", "xz", "txz", "cab", "arj", "lzh", "lha", "ace", "zipx", "z", "uue", "xxe"],
+  "html": ["html", "htm", "shtml", "xhtml", "mht", "mhtml", "svg", "svgz", "xht"],
+  "document": ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt", "csv", "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "heic", "webp", "mp3", "mp4", "wav", "mov", "ics", "vcf", "eml", "msg", "xml", "json"],
+  "notes": ["executable mirrors concept §6.6 ATT_EXECUTABLE plus closely related launchers. iso/img/vhd are disk images that mount and run content."]
+}

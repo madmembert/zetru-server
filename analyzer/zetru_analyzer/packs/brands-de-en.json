@@ -1,0 +1,2383 @@
+{
+  "id": "zetru-brands",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "notes": [
+    "Official domains: a host is official when it equals a listed domain or is a subdomain of it.",
+    "sending_domains: domains this brand sends mail from. link_domains: further domains it links to. Freemail and user-generated hosting domains are never listed as sending domains.",
+    "tokens: case-insensitive whole-word display tokens (compared after NFKC, case folding and UTS #39 skeleton). tokens_cs: case-sensitive acronyms.",
+    "labels: registrable labels used for the Damerau-Levenshtein and same-label-other-suffix look-alike rules. token_rule: whether a label as a whole hyphen/dot token in a foreign host counts as a look-alike (rule 4).",
+    "regional: group brands whose members use many regional domains (pattern on the registrable label, allowed TLDs). Matching domains are treated as 'cannot judge' and are never flagged by the server.",
+    "authority_suffixes: for authorities, government domains under which any subdomain is accepted as official.",
+    "review: entries or values that need human verification before relying on them; they are used conservatively (only to suppress findings, never to raise risk on their own)."
+  ],
+  "authority_suffixes": {
+    "de": [
+      "bund.de",
+      "bayern.de",
+      "nrw.de",
+      "niedersachsen.de",
+      "hessen.de",
+      "sachsen.de",
+      "brandenburg.de",
+      "thueringen.de",
+      "rlp.de",
+      "saarland.de",
+      "sachsen-anhalt.de",
+      "schleswig-holstein.de",
+      "bremen.de",
+      "berlin.de",
+      "baden-wuerttemberg.de"
+    ],
+    "uk": [
+      "gov.uk",
+      "police.uk",
+      "nhs.uk",
+      "nhs.net"
+    ],
+    "us": [
+      "gov"
+    ],
+    "eu": [
+      "europa.eu"
+    ],
+    "review": "German state portal domains: verify that no third party can obtain mail-capable subdomains (berlin.de is operated by a contractor)."
+  },
+  "brands": [
+    {
+      "key": "paypal",
+      "name": "PayPal",
+      "authority": false,
+      "tokens": [
+        "paypal"
+      ],
+      "sending_domains": [
+        "paypal.com",
+        "paypal.de"
+      ],
+      "link_domains": [
+        "paypal.me",
+        "paypalobjects.com"
+      ],
+      "labels": [
+        "paypal"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "amazon",
+      "name": "Amazon",
+      "authority": false,
+      "tokens": [
+        "amazon",
+        "amazon prime",
+        "prime video"
+      ],
+      "sending_domains": [
+        "amazon.de",
+        "amazon.com",
+        "amazon.co.uk",
+        "amazon.fr",
+        "amazon.it",
+        "amazon.es",
+        "amazon.nl",
+        "amazon.at",
+        "amazon.pl",
+        "amazon.se",
+        "amazon.ca",
+        "amazon.co.jp"
+      ],
+      "link_domains": [
+        "amzn.to",
+        "amzn.eu",
+        "a.co",
+        "primevideo.com",
+        "audible.de",
+        "audible.com",
+        "amazon-adsystem.com"
+      ],
+      "labels": [
+        "amazon"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "dhl",
+      "name": "DHL",
+      "authority": false,
+      "tokens": [
+        "dhl",
+        "dhl paket",
+        "dhl express"
+      ],
+      "sending_domains": [
+        "dhl.de",
+        "dhl.com",
+        "deutschepost.de"
+      ],
+      "link_domains": [
+        "dhlparcel.nl"
+      ],
+      "labels": [
+        "dhl"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "deutschepost",
+      "name": "Deutsche Post",
+      "authority": false,
+      "tokens": [
+        "deutsche post"
+      ],
+      "sending_domains": [
+        "deutschepost.de",
+        "dhl.de"
+      ],
+      "link_domains": [
+        "deutschepost.com",
+        "efiliale.de"
+      ],
+      "labels": [
+        "deutschepost"
+      ],
+      "token_rule": true,
+      "review": "deutschepost.com and efiliale.de believed official; verify"
+    },
+    {
+      "key": "hermes",
+      "name": "Hermes",
+      "authority": false,
+      "tokens": [
+        "myhermes",
+        "hermes paket",
+        "hermes versand",
+        "hermes germany"
+      ],
+      "tokens_cs": [
+        "Hermes"
+      ],
+      "sending_domains": [
+        "myhermes.de",
+        "hermesworld.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "myhermes",
+        "hermesworld"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "dpd",
+      "name": "DPD",
+      "authority": false,
+      "tokens": [
+        "dpd paket"
+      ],
+      "tokens_cs": [
+        "DPD"
+      ],
+      "sending_domains": [
+        "dpd.de",
+        "dpd.com"
+      ],
+      "link_domains": [
+        "dpdgroup.com"
+      ],
+      "labels": [
+        "dpd"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "ups",
+      "name": "UPS",
+      "authority": false,
+      "tokens": [
+        "united parcel service"
+      ],
+      "tokens_cs": [
+        "UPS"
+      ],
+      "sending_domains": [
+        "ups.com"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "gls",
+      "name": "GLS",
+      "authority": false,
+      "tokens": [
+        "gls paket",
+        "gls germany"
+      ],
+      "tokens_cs": [
+        "GLS"
+      ],
+      "sending_domains": [
+        "gls-pakete.de",
+        "gls-group.com",
+        "gls-group.eu"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "fedex",
+      "name": "FedEx",
+      "authority": false,
+      "tokens": [
+        "fedex"
+      ],
+      "sending_domains": [
+        "fedex.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "fedex"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "usps",
+      "name": "USPS",
+      "authority": false,
+      "tokens": [
+        "us postal service",
+        "united states postal service"
+      ],
+      "tokens_cs": [
+        "USPS"
+      ],
+      "sending_domains": [
+        "usps.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "usps"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "royalmail",
+      "name": "Royal Mail",
+      "authority": false,
+      "tokens": [
+        "royal mail"
+      ],
+      "sending_domains": [
+        "royalmail.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "royalmail"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "evri",
+      "name": "Evri",
+      "authority": false,
+      "tokens": [
+        "evri"
+      ],
+      "sending_domains": [
+        "evri.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "evri"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "klarna",
+      "name": "Klarna",
+      "authority": false,
+      "tokens": [
+        "klarna"
+      ],
+      "sending_domains": [
+        "klarna.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "klarna"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "ebay",
+      "name": "eBay",
+      "authority": false,
+      "tokens": [
+        "ebay"
+      ],
+      "sending_domains": [
+        "ebay.de",
+        "ebay.com",
+        "ebay.co.uk",
+        "ebay.at",
+        "ebay.fr",
+        "ebay.it",
+        "ebay.ch",
+        "ebay.be",
+        "ebay.nl",
+        "ebay.es",
+        "ebay.pl",
+        "ebay.ie",
+        "ebay.com.au",
+        "ebay.ca"
+      ],
+      "link_domains": [],
+      "labels": [
+        "ebay"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "kleinanzeigen",
+      "name": "Kleinanzeigen",
+      "authority": false,
+      "tokens": [
+        "kleinanzeigen",
+        "ebay kleinanzeigen"
+      ],
+      "sending_domains": [
+        "kleinanzeigen.de"
+      ],
+      "link_domains": [
+        "ebay-kleinanzeigen.de"
+      ],
+      "labels": [
+        "kleinanzeigen"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "otto",
+      "name": "OTTO",
+      "authority": false,
+      "tokens": [
+        "otto.de",
+        "otto versand"
+      ],
+      "sending_domains": [
+        "otto.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false,
+      "review": "token 'otto' is a common first name; only qualified tokens are used"
+    },
+    {
+      "key": "zalando",
+      "name": "Zalando",
+      "authority": false,
+      "tokens": [
+        "zalando"
+      ],
+      "sending_domains": [
+        "zalando.de",
+        "zalando.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "zalando"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "vinted",
+      "name": "Vinted",
+      "authority": false,
+      "tokens": [
+        "vinted"
+      ],
+      "sending_domains": [
+        "vinted.de",
+        "vinted.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "vinted"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "telekom",
+      "name": "Telekom",
+      "authority": false,
+      "tokens": [
+        "telekom",
+        "deutsche telekom"
+      ],
+      "sending_domains": [
+        "telekom.de",
+        "telekom.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "telekom"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "vodafone",
+      "name": "Vodafone",
+      "authority": false,
+      "tokens": [
+        "vodafone"
+      ],
+      "sending_domains": [
+        "vodafone.de",
+        "vodafone.com",
+        "vodafone.co.uk"
+      ],
+      "link_domains": [],
+      "labels": [
+        "vodafone"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "o2",
+      "name": "O2",
+      "authority": false,
+      "tokens": [
+        "o2 germany",
+        "o2 telefonica"
+      ],
+      "tokens_cs": [
+        "O2"
+      ],
+      "sending_domains": [
+        "o2online.de",
+        "telefonica.de",
+        "o2.co.uk"
+      ],
+      "link_domains": [],
+      "labels": [
+        "o2online"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "1und1",
+      "name": "1&1",
+      "authority": false,
+      "tokens": [
+        "1&1",
+        "1und1",
+        "ionos"
+      ],
+      "sending_domains": [
+        "1und1.de",
+        "ionos.de",
+        "ionos.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "1und1",
+        "ionos"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "congstar",
+      "name": "congstar",
+      "authority": false,
+      "tokens": [
+        "congstar"
+      ],
+      "sending_domains": [
+        "congstar.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "congstar"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "microsoft",
+      "name": "Microsoft",
+      "authority": false,
+      "tokens": [
+        "microsoft",
+        "office 365",
+        "office365",
+        "microsoft 365",
+        "onedrive",
+        "sharepoint",
+        "outlook team",
+        "microsoft defender",
+        "windows defender"
+      ],
+      "sending_domains": [
+        "microsoft.com",
+        "sharepointonline.com"
+      ],
+      "link_domains": [
+        "office.com",
+        "live.com",
+        "microsoftonline.com",
+        "office365.com",
+        "outlook.com",
+        "aka.ms",
+        "microsoft365.com",
+        "windows.com",
+        "xbox.com",
+        "skype.com",
+        "bing.com"
+      ],
+      "labels": [
+        "microsoft",
+        "office365",
+        "onedrive",
+        "sharepoint",
+        "outlook"
+      ],
+      "token_rule": true,
+      "review": "sharepointonline.com as SharePoint notification sender: verify"
+    },
+    {
+      "key": "apple",
+      "name": "Apple",
+      "authority": false,
+      "tokens": [
+        "apple",
+        "apple id",
+        "icloud",
+        "itunes",
+        "app store"
+      ],
+      "sending_domains": [
+        "apple.com"
+      ],
+      "link_domains": [
+        "icloud.com",
+        "itunes.com",
+        "mzstatic.com"
+      ],
+      "labels": [
+        "apple",
+        "icloud",
+        "itunes"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "google",
+      "name": "Google",
+      "authority": false,
+      "tokens": [
+        "google",
+        "google account",
+        "gmail team",
+        "youtube"
+      ],
+      "sending_domains": [
+        "google.com"
+      ],
+      "link_domains": [
+        "google.de",
+        "youtube.com",
+        "g.co",
+        "goo.gl",
+        "gmail.com",
+        "google.at",
+        "google.ch",
+        "google.fr",
+        "google.it",
+        "google.es",
+        "google.nl",
+        "google.pl",
+        "google.be",
+        "google.co.uk",
+        "google.com.au",
+        "google.ca",
+        "google-analytics.com",
+        "youtube-nocookie.com"
+      ],
+      "labels": [
+        "google",
+        "youtube"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "facebook",
+      "name": "Facebook / Meta",
+      "authority": false,
+      "tokens": [
+        "facebook",
+        "meta business",
+        "meta support",
+        "meta for business"
+      ],
+      "sending_domains": [
+        "facebookmail.com",
+        "facebook.com",
+        "meta.com"
+      ],
+      "link_domains": [
+        "fb.com",
+        "fb.me"
+      ],
+      "labels": [
+        "facebook",
+        "facebookmail"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "instagram",
+      "name": "Instagram",
+      "authority": false,
+      "tokens": [
+        "instagram"
+      ],
+      "sending_domains": [
+        "instagram.com",
+        "facebookmail.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "instagram"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "whatsapp",
+      "name": "WhatsApp",
+      "authority": false,
+      "tokens": [
+        "whatsapp"
+      ],
+      "sending_domains": [
+        "whatsapp.com"
+      ],
+      "link_domains": [
+        "wa.me",
+        "whatsapp.net"
+      ],
+      "labels": [
+        "whatsapp"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "linkedin",
+      "name": "LinkedIn",
+      "authority": false,
+      "tokens": [
+        "linkedin"
+      ],
+      "sending_domains": [
+        "linkedin.com"
+      ],
+      "link_domains": [
+        "lnkd.in"
+      ],
+      "labels": [
+        "linkedin"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "twitter",
+      "name": "X / Twitter",
+      "authority": false,
+      "tokens": [
+        "twitter"
+      ],
+      "sending_domains": [
+        "x.com",
+        "twitter.com"
+      ],
+      "link_domains": [
+        "t.co"
+      ],
+      "labels": [
+        "twitter"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "tiktok",
+      "name": "TikTok",
+      "authority": false,
+      "tokens": [
+        "tiktok"
+      ],
+      "sending_domains": [
+        "tiktok.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "tiktok"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "netflix",
+      "name": "Netflix",
+      "authority": false,
+      "tokens": [
+        "netflix"
+      ],
+      "sending_domains": [
+        "netflix.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "netflix"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "spotify",
+      "name": "Spotify",
+      "authority": false,
+      "tokens": [
+        "spotify"
+      ],
+      "sending_domains": [
+        "spotify.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "spotify"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "disneyplus",
+      "name": "Disney+",
+      "authority": false,
+      "tokens": [
+        "disney+",
+        "disney plus"
+      ],
+      "sending_domains": [
+        "disneyplus.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "disneyplus"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "dazn",
+      "name": "DAZN",
+      "authority": false,
+      "tokens_cs": [
+        "DAZN"
+      ],
+      "tokens": [],
+      "sending_domains": [
+        "dazn.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "dazn"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "sky",
+      "name": "Sky",
+      "authority": false,
+      "tokens": [
+        "sky deutschland",
+        "sky ticket"
+      ],
+      "sending_domains": [
+        "sky.de",
+        "sky.com"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "docusign",
+      "name": "DocuSign",
+      "authority": false,
+      "tokens": [
+        "docusign"
+      ],
+      "sending_domains": [
+        "docusign.net",
+        "docusign.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "docusign"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "dropbox",
+      "name": "Dropbox",
+      "authority": false,
+      "tokens": [
+        "dropbox"
+      ],
+      "sending_domains": [
+        "dropbox.com",
+        "dropboxmail.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "dropbox"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "wetransfer",
+      "name": "WeTransfer",
+      "authority": false,
+      "tokens": [
+        "wetransfer"
+      ],
+      "sending_domains": [
+        "wetransfer.com"
+      ],
+      "link_domains": [
+        "we.tl"
+      ],
+      "labels": [
+        "wetransfer"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "adobe",
+      "name": "Adobe",
+      "authority": false,
+      "tokens": [
+        "adobe",
+        "adobe sign",
+        "adobe acrobat"
+      ],
+      "sending_domains": [
+        "adobe.com",
+        "adobesign.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "adobe"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "booking",
+      "name": "Booking.com",
+      "authority": false,
+      "tokens": [
+        "booking.com"
+      ],
+      "sending_domains": [
+        "booking.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "booking"
+      ],
+      "token_rule": false
+    },
+    {
+      "key": "airbnb",
+      "name": "Airbnb",
+      "authority": false,
+      "tokens": [
+        "airbnb"
+      ],
+      "sending_domains": [
+        "airbnb.com",
+        "airbnb.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "airbnb"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "steam",
+      "name": "Steam",
+      "authority": false,
+      "tokens": [
+        "steam support",
+        "steam community",
+        "steampowered"
+      ],
+      "sending_domains": [
+        "steampowered.com"
+      ],
+      "link_domains": [
+        "steamcommunity.com"
+      ],
+      "labels": [
+        "steampowered",
+        "steamcommunity"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "norton",
+      "name": "Norton",
+      "authority": false,
+      "tokens": [
+        "norton",
+        "norton 360",
+        "nortonlifelock"
+      ],
+      "sending_domains": [
+        "norton.com"
+      ],
+      "link_domains": [
+        "gendigital.com"
+      ],
+      "labels": [
+        "norton"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "mcafee",
+      "name": "McAfee",
+      "authority": false,
+      "tokens": [
+        "mcafee"
+      ],
+      "sending_domains": [
+        "mcafee.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "mcafee"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "geeksquad",
+      "name": "Geek Squad",
+      "authority": false,
+      "tokens": [
+        "geek squad"
+      ],
+      "sending_domains": [
+        "bestbuy.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "geeksquad"
+      ],
+      "token_rule": true,
+      "review": "Geek Squad mail domain not verified; bestbuy.com assumed"
+    },
+    {
+      "key": "coinbase",
+      "name": "Coinbase",
+      "authority": false,
+      "tokens": [
+        "coinbase"
+      ],
+      "sending_domains": [
+        "coinbase.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "coinbase"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "binance",
+      "name": "Binance",
+      "authority": false,
+      "tokens": [
+        "binance"
+      ],
+      "sending_domains": [
+        "binance.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "binance"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "metamask",
+      "name": "MetaMask",
+      "authority": false,
+      "tokens": [
+        "metamask"
+      ],
+      "sending_domains": [
+        "metamask.io"
+      ],
+      "link_domains": [],
+      "labels": [
+        "metamask"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "westernunion",
+      "name": "Western Union",
+      "authority": false,
+      "tokens": [
+        "western union"
+      ],
+      "sending_domains": [
+        "westernunion.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "westernunion"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "paysafecard",
+      "name": "paysafecard",
+      "authority": false,
+      "tokens": [
+        "paysafecard"
+      ],
+      "sending_domains": [
+        "paysafecard.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "paysafecard"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "sparkasse",
+      "name": "Sparkasse",
+      "authority": false,
+      "tokens": [
+        "sparkasse",
+        "kreissparkasse",
+        "stadtsparkasse"
+      ],
+      "sending_domains": [
+        "sparkasse.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "sparkasse"
+      ],
+      "token_rule": true,
+      "regional": {
+        "pattern": "^(?:[a-z0-9]+-)*(?:sparkasse|kreissparkasse|stadtsparkasse)(?:-[a-z0-9]+)*$",
+        "tlds": [
+          "de"
+        ]
+      },
+      "review": "Regional savings banks use their own domains (e.g. sparkasse-<region>.de, ksk-*, sskm.de, haspa.de); only the group portal is listed. Regional .de domains carrying the token are not judged by the server."
+    },
+    {
+      "key": "volksbank",
+      "name": "Volksbanken Raiffeisenbanken",
+      "authority": false,
+      "tokens": [
+        "volksbank",
+        "raiffeisenbank",
+        "vr bank",
+        "vr-bank",
+        "vr banking"
+      ],
+      "sending_domains": [
+        "vr.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "volksbank",
+        "raiffeisenbank"
+      ],
+      "token_rule": true,
+      "regional": {
+        "pattern": "^(?:[a-z0-9]+-)*(?:volksbank|raiffeisenbank|vrbank|vr|voba)(?:-[a-z0-9]+)*$",
+        "tlds": [
+          "de"
+        ]
+      },
+      "review": "vr.de believed to be the BVR group portal; regional banks use their own domains."
+    },
+    {
+      "key": "deutschebank",
+      "name": "Deutsche Bank",
+      "authority": false,
+      "tokens": [
+        "deutsche bank"
+      ],
+      "sending_domains": [
+        "deutsche-bank.de",
+        "db.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "deutsche-bank",
+        "deutschebank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "commerzbank",
+      "name": "Commerzbank",
+      "authority": false,
+      "tokens": [
+        "commerzbank"
+      ],
+      "sending_domains": [
+        "commerzbank.de",
+        "commerzbank.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "commerzbank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "comdirect",
+      "name": "comdirect",
+      "authority": false,
+      "tokens": [
+        "comdirect"
+      ],
+      "sending_domains": [
+        "comdirect.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "comdirect"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "ing",
+      "name": "ING",
+      "authority": false,
+      "tokens": [
+        "ing-diba",
+        "ing diba"
+      ],
+      "tokens_cs": [
+        "ING"
+      ],
+      "sending_domains": [
+        "ing.de"
+      ],
+      "link_domains": [
+        "ing-diba.de"
+      ],
+      "labels": [
+        "ing-diba"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "dkb",
+      "name": "DKB",
+      "authority": false,
+      "tokens": [
+        "deutsche kreditbank"
+      ],
+      "tokens_cs": [
+        "DKB"
+      ],
+      "sending_domains": [
+        "dkb.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "dkb"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "n26",
+      "name": "N26",
+      "authority": false,
+      "tokens": [
+        "n26"
+      ],
+      "sending_domains": [
+        "n26.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "n26"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "postbank",
+      "name": "Postbank",
+      "authority": false,
+      "tokens": [
+        "postbank"
+      ],
+      "sending_domains": [
+        "postbank.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "postbank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "hypovereinsbank",
+      "name": "HypoVereinsbank",
+      "authority": false,
+      "tokens": [
+        "hypovereinsbank"
+      ],
+      "tokens_cs": [
+        "HVB"
+      ],
+      "sending_domains": [
+        "hypovereinsbank.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "hypovereinsbank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "targobank",
+      "name": "Targobank",
+      "authority": false,
+      "tokens": [
+        "targobank"
+      ],
+      "sending_domains": [
+        "targobank.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "targobank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "santander",
+      "name": "Santander",
+      "authority": false,
+      "tokens": [
+        "santander"
+      ],
+      "sending_domains": [
+        "santander.de",
+        "santander.co.uk",
+        "santander.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "santander"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "consorsbank",
+      "name": "Consorsbank",
+      "authority": false,
+      "tokens": [
+        "consorsbank"
+      ],
+      "sending_domains": [
+        "consorsbank.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "consorsbank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "revolut",
+      "name": "Revolut",
+      "authority": false,
+      "tokens": [
+        "revolut"
+      ],
+      "sending_domains": [
+        "revolut.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "revolut"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "traderepublic",
+      "name": "Trade Republic",
+      "authority": false,
+      "tokens": [
+        "trade republic"
+      ],
+      "sending_domains": [
+        "traderepublic.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "traderepublic"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "scalable",
+      "name": "Scalable Capital",
+      "authority": false,
+      "tokens": [
+        "scalable capital"
+      ],
+      "sending_domains": [
+        "scalable.capital"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "wise",
+      "name": "Wise",
+      "authority": false,
+      "tokens": [
+        "transferwise",
+        "wise.com"
+      ],
+      "sending_domains": [
+        "wise.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "transferwise"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "barclays",
+      "name": "Barclays",
+      "authority": false,
+      "tokens": [
+        "barclays"
+      ],
+      "sending_domains": [
+        "barclays.co.uk",
+        "barclays.com"
+      ],
+      "link_domains": [
+        "barclays.de"
+      ],
+      "labels": [
+        "barclays"
+      ],
+      "token_rule": true,
+      "review": "barclays.de (German card business) believed official; verify"
+    },
+    {
+      "key": "hsbc",
+      "name": "HSBC",
+      "authority": false,
+      "tokens": [],
+      "tokens_cs": [
+        "HSBC"
+      ],
+      "sending_domains": [
+        "hsbc.co.uk",
+        "hsbc.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "hsbc"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "lloyds",
+      "name": "Lloyds Bank",
+      "authority": false,
+      "tokens": [
+        "lloyds bank"
+      ],
+      "sending_domains": [
+        "lloydsbank.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "lloydsbank"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "natwest",
+      "name": "NatWest",
+      "authority": false,
+      "tokens": [
+        "natwest"
+      ],
+      "sending_domains": [
+        "natwest.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "natwest"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "bankofamerica",
+      "name": "Bank of America",
+      "authority": false,
+      "tokens": [
+        "bank of america"
+      ],
+      "sending_domains": [
+        "bankofamerica.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "bankofamerica"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "wellsfargo",
+      "name": "Wells Fargo",
+      "authority": false,
+      "tokens": [
+        "wells fargo"
+      ],
+      "sending_domains": [
+        "wellsfargo.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "wellsfargo"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "chase",
+      "name": "Chase",
+      "authority": false,
+      "tokens": [
+        "chase bank",
+        "jpmorgan chase"
+      ],
+      "sending_domains": [
+        "chase.com"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "visa",
+      "name": "Visa",
+      "authority": false,
+      "tokens": [
+        "visa card",
+        "visa secure",
+        "verified by visa"
+      ],
+      "sending_domains": [
+        "visa.com",
+        "visa.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "mastercard",
+      "name": "Mastercard",
+      "authority": false,
+      "tokens": [
+        "mastercard"
+      ],
+      "sending_domains": [
+        "mastercard.com",
+        "mastercard.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "mastercard"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "amex",
+      "name": "American Express",
+      "authority": false,
+      "tokens": [
+        "american express",
+        "amex"
+      ],
+      "sending_domains": [
+        "americanexpress.com",
+        "aexp.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "americanexpress"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "lidl",
+      "name": "Lidl",
+      "authority": false,
+      "tokens": [
+        "lidl"
+      ],
+      "sending_domains": [
+        "lidl.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "lidl"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "aldi",
+      "name": "ALDI",
+      "authority": false,
+      "tokens": [
+        "aldi",
+        "aldi sued",
+        "aldi nord",
+        "aldi süd"
+      ],
+      "sending_domains": [
+        "aldi-sued.de",
+        "aldi-nord.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "aldi"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "rewe",
+      "name": "REWE",
+      "authority": false,
+      "tokens": [],
+      "tokens_cs": [
+        "REWE"
+      ],
+      "sending_domains": [
+        "rewe.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "rewe"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "edeka",
+      "name": "EDEKA",
+      "authority": false,
+      "tokens": [
+        "edeka"
+      ],
+      "sending_domains": [
+        "edeka.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "edeka"
+      ],
+      "token_rule": true,
+      "regional": {
+        "pattern": "^(?:[a-z0-9]+-)*edeka(?:-[a-z0-9]+)*$",
+        "tlds": [
+          "de"
+        ]
+      },
+      "review": "Regional EDEKA companies use their own .de domains."
+    },
+    {
+      "key": "mediamarkt",
+      "name": "MediaMarkt",
+      "authority": false,
+      "tokens": [
+        "mediamarkt",
+        "media markt"
+      ],
+      "sending_domains": [
+        "mediamarkt.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "mediamarkt"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "ikea",
+      "name": "IKEA",
+      "authority": false,
+      "tokens": [],
+      "tokens_cs": [
+        "IKEA"
+      ],
+      "sending_domains": [
+        "ikea.com",
+        "ikea.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "ikea"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "deutschebahn",
+      "name": "Deutsche Bahn",
+      "authority": false,
+      "tokens": [
+        "deutsche bahn",
+        "db navigator"
+      ],
+      "sending_domains": [
+        "bahn.de",
+        "deutschebahn.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "deutschebahn"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "adac",
+      "name": "ADAC",
+      "authority": false,
+      "tokens": [],
+      "tokens_cs": [
+        "ADAC"
+      ],
+      "sending_domains": [
+        "adac.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "adac"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "check24",
+      "name": "CHECK24",
+      "authority": false,
+      "tokens": [
+        "check24"
+      ],
+      "sending_domains": [
+        "check24.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "check24"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "temu",
+      "name": "Temu",
+      "authority": false,
+      "tokens": [
+        "temu"
+      ],
+      "sending_domains": [
+        "temu.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "temu"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "shein",
+      "name": "SHEIN",
+      "authority": false,
+      "tokens": [
+        "shein"
+      ],
+      "sending_domains": [
+        "shein.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "shein"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "aliexpress",
+      "name": "AliExpress",
+      "authority": false,
+      "tokens": [
+        "aliexpress"
+      ],
+      "sending_domains": [
+        "aliexpress.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "aliexpress"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "lieferando",
+      "name": "Lieferando",
+      "authority": false,
+      "tokens": [
+        "lieferando"
+      ],
+      "sending_domains": [
+        "lieferando.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "lieferando"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "allianz",
+      "name": "Allianz",
+      "authority": false,
+      "tokens": [
+        "allianz"
+      ],
+      "sending_domains": [
+        "allianz.de",
+        "allianz.com"
+      ],
+      "link_domains": [],
+      "labels": [
+        "allianz"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "huk",
+      "name": "HUK-COBURG",
+      "authority": false,
+      "tokens": [
+        "huk-coburg",
+        "huk coburg"
+      ],
+      "sending_domains": [
+        "huk.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "immoscout",
+      "name": "ImmoScout24",
+      "authority": false,
+      "tokens": [
+        "immobilienscout24",
+        "immoscout24",
+        "immoscout"
+      ],
+      "sending_domains": [
+        "immobilienscout24.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "immobilienscout24"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "strato",
+      "name": "STRATO",
+      "authority": false,
+      "tokens": [
+        "strato"
+      ],
+      "sending_domains": [
+        "strato.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "strato"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "tk",
+      "name": "Techniker Krankenkasse",
+      "authority": false,
+      "tokens": [
+        "techniker krankenkasse"
+      ],
+      "sending_domains": [
+        "tk.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "aok",
+      "name": "AOK",
+      "authority": false,
+      "tokens": [],
+      "tokens_cs": [
+        "AOK"
+      ],
+      "sending_domains": [
+        "aok.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "barmer",
+      "name": "BARMER",
+      "authority": false,
+      "tokens": [
+        "barmer"
+      ],
+      "sending_domains": [
+        "barmer.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "barmer"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "dak",
+      "name": "DAK-Gesundheit",
+      "authority": false,
+      "tokens": [
+        "dak-gesundheit",
+        "dak gesundheit"
+      ],
+      "tokens_cs": [
+        "DAK"
+      ],
+      "sending_domains": [
+        "dak.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "ikk-classic",
+      "name": "IKK classic",
+      "authority": false,
+      "tokens": [
+        "ikk classic"
+      ],
+      "sending_domains": [
+        "ikk-classic.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "kkh",
+      "name": "KKH",
+      "authority": false,
+      "tokens": [
+        "kaufmännische krankenkasse"
+      ],
+      "tokens_cs": [
+        "KKH"
+      ],
+      "sending_domains": [
+        "kkh.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "hkk",
+      "name": "hkk Krankenkasse",
+      "authority": false,
+      "tokens": [
+        "hkk krankenkasse"
+      ],
+      "sending_domains": [
+        "hkk.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false
+    },
+    {
+      "key": "elster",
+      "name": "ELSTER / Finanzamt",
+      "authority": true,
+      "tokens": [
+        "elster",
+        "finanzamt",
+        "steuerverwaltung",
+        "bundeszentralamt für steuern",
+        "bundesfinanzministerium"
+      ],
+      "sending_domains": [
+        "elster.de",
+        "bzst.de",
+        "bundesfinanzministerium.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "elster"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ],
+      "review": "Local tax offices use state domains; covered by authority_suffixes.de"
+    },
+    {
+      "key": "polizei",
+      "name": "Polizei",
+      "authority": true,
+      "tokens": [
+        "polizei",
+        "bundespolizei",
+        "kriminalpolizei",
+        "landeskriminalamt",
+        "bundeskriminalamt"
+      ],
+      "tokens_cs": [
+        "BKA",
+        "LKA"
+      ],
+      "sending_domains": [
+        "polizei.de",
+        "bka.de",
+        "bundespolizei.de",
+        "polizei-bw.de",
+        "polizei.nrw"
+      ],
+      "link_domains": [],
+      "labels": [
+        "polizei",
+        "bundespolizei"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ],
+      "regional": {
+        "pattern": "^(?:[a-z0-9]+-)*polizei(?:-[a-z0-9]+)*$",
+        "tlds": [
+          "de"
+        ]
+      },
+      "review": "polizei-bw.de and polizei.nrw believed official; verify"
+    },
+    {
+      "key": "europol",
+      "name": "Europol",
+      "authority": true,
+      "tokens": [
+        "europol"
+      ],
+      "sending_domains": [
+        "europol.europa.eu"
+      ],
+      "link_domains": [],
+      "labels": [
+        "europol"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "eu"
+      ]
+    },
+    {
+      "key": "interpol",
+      "name": "Interpol",
+      "authority": true,
+      "tokens": [
+        "interpol"
+      ],
+      "sending_domains": [
+        "interpol.int"
+      ],
+      "link_domains": [],
+      "labels": [
+        "interpol"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "zoll",
+      "name": "Zoll",
+      "authority": true,
+      "tokens": [
+        "zollamt",
+        "hauptzollamt",
+        "deutscher zoll",
+        "zoll online",
+        "generalzolldirektion"
+      ],
+      "sending_domains": [
+        "zoll.de"
+      ],
+      "link_domains": [
+        "zoll-auktion.de"
+      ],
+      "labels": [],
+      "token_rule": false,
+      "authority_suffix_groups": [
+        "de"
+      ]
+    },
+    {
+      "key": "drv",
+      "name": "Deutsche Rentenversicherung",
+      "authority": true,
+      "tokens": [
+        "rentenversicherung",
+        "deutsche rentenversicherung"
+      ],
+      "tokens_cs": [
+        "DRV"
+      ],
+      "sending_domains": [
+        "deutsche-rentenversicherung.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "rentenversicherung"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ]
+    },
+    {
+      "key": "arbeitsagentur",
+      "name": "Bundesagentur für Arbeit",
+      "authority": true,
+      "tokens": [
+        "arbeitsagentur",
+        "agentur für arbeit",
+        "bundesagentur für arbeit",
+        "jobcenter"
+      ],
+      "sending_domains": [
+        "arbeitsagentur.de",
+        "jobcenter-ge.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "arbeitsagentur"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ],
+      "review": "jobcenter-ge.de believed official; verify"
+    },
+    {
+      "key": "bafin",
+      "name": "BaFin",
+      "authority": true,
+      "tokens": [
+        "bafin"
+      ],
+      "sending_domains": [
+        "bafin.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "bafin"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ]
+    },
+    {
+      "key": "bsi",
+      "name": "BSI",
+      "authority": true,
+      "tokens": [
+        "bundesamt für sicherheit in der informationstechnik"
+      ],
+      "tokens_cs": [
+        "BSI"
+      ],
+      "sending_domains": [
+        "bsi.bund.de"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false,
+      "authority_suffix_groups": [
+        "de"
+      ]
+    },
+    {
+      "key": "bundesregierung",
+      "name": "Bundesregierung",
+      "authority": true,
+      "tokens": [
+        "bundesregierung"
+      ],
+      "sending_domains": [
+        "bundesregierung.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "bundesregierung"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ]
+    },
+    {
+      "key": "bundesnetzagentur",
+      "name": "Bundesnetzagentur",
+      "authority": true,
+      "tokens": [
+        "bundesnetzagentur"
+      ],
+      "sending_domains": [
+        "bundesnetzagentur.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "bundesnetzagentur"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "de"
+      ]
+    },
+    {
+      "key": "beitragsservice",
+      "name": "ARD ZDF Deutschlandradio Beitragsservice",
+      "authority": true,
+      "tokens": [
+        "rundfunkbeitrag",
+        "beitragsservice",
+        "ard zdf deutschlandradio"
+      ],
+      "tokens_cs": [
+        "GEZ"
+      ],
+      "sending_domains": [
+        "rundfunkbeitrag.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "rundfunkbeitrag",
+        "beitragsservice"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "verbraucherzentrale",
+      "name": "Verbraucherzentrale",
+      "authority": false,
+      "tokens": [
+        "verbraucherzentrale"
+      ],
+      "sending_domains": [
+        "verbraucherzentrale.de"
+      ],
+      "link_domains": [],
+      "labels": [
+        "verbraucherzentrale"
+      ],
+      "token_rule": true,
+      "regional": {
+        "pattern": "^verbraucherzentrale(?:-[a-z0-9]+)*$",
+        "tlds": [
+          "de"
+        ]
+      }
+    },
+    {
+      "key": "hmrc",
+      "name": "HMRC",
+      "authority": true,
+      "tokens": [
+        "hm revenue"
+      ],
+      "tokens_cs": [
+        "HMRC"
+      ],
+      "sending_domains": [
+        "hmrc.gov.uk"
+      ],
+      "link_domains": [],
+      "labels": [
+        "hmrc"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "uk"
+      ]
+    },
+    {
+      "key": "dvla",
+      "name": "DVLA",
+      "authority": true,
+      "tokens": [
+        "driver and vehicle licensing"
+      ],
+      "tokens_cs": [
+        "DVLA"
+      ],
+      "sending_domains": [],
+      "link_domains": [],
+      "labels": [
+        "dvla"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "uk"
+      ],
+      "review": "DVLA sends via gov.uk services; accepted through authority_suffixes.uk"
+    },
+    {
+      "key": "nhs",
+      "name": "NHS",
+      "authority": true,
+      "tokens": [
+        "national health service"
+      ],
+      "tokens_cs": [
+        "NHS"
+      ],
+      "sending_domains": [
+        "nhs.uk",
+        "nhs.net"
+      ],
+      "link_domains": [],
+      "labels": [
+        "nhs"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "uk"
+      ]
+    },
+    {
+      "key": "tvlicensing",
+      "name": "TV Licensing",
+      "authority": true,
+      "tokens": [
+        "tv licensing",
+        "tv licence"
+      ],
+      "sending_domains": [
+        "tvlicensing.co.uk"
+      ],
+      "link_domains": [],
+      "labels": [
+        "tvlicensing"
+      ],
+      "token_rule": true
+    },
+    {
+      "key": "irs",
+      "name": "IRS",
+      "authority": true,
+      "tokens": [
+        "internal revenue service"
+      ],
+      "tokens_cs": [
+        "IRS"
+      ],
+      "sending_domains": [
+        "irs.gov"
+      ],
+      "link_domains": [],
+      "labels": [
+        "irs"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "us"
+      ]
+    },
+    {
+      "key": "fbi",
+      "name": "FBI",
+      "authority": true,
+      "tokens": [
+        "federal bureau of investigation"
+      ],
+      "tokens_cs": [
+        "FBI"
+      ],
+      "sending_domains": [
+        "fbi.gov",
+        "ic3.gov"
+      ],
+      "link_domains": [],
+      "labels": [
+        "fbi"
+      ],
+      "token_rule": true,
+      "authority_suffix_groups": [
+        "us"
+      ]
+    },
+    {
+      "key": "ssa",
+      "name": "Social Security Administration",
+      "authority": true,
+      "tokens": [
+        "social security administration"
+      ],
+      "sending_domains": [
+        "ssa.gov"
+      ],
+      "link_domains": [],
+      "labels": [],
+      "token_rule": false,
+      "authority_suffix_groups": [
+        "us"
+      ]
+    }
+  ]
+}

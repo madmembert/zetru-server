@@ -1,0 +1,330 @@
+# Zetru rule tier, German (concept §9.4). Patterns are Python regular expressions matched against
+# normalised text: NFKC, case-folded, homoglyph-folded, umlauts folded (ä→ae, ö→oe, ü→ue, ß→ss).
+# Evidence: none (no group), weak (one group), moderate (two groups), strong (two groups within the same or
+# adjacent sentence plus a call to action in that sentence or the one before/after).
+version: rules-1.0.0
+language: de
+
+cta:
+  link:
+    - '\[link\]'
+    - '\b(?:klicken|klicke|tippen|tippe) sie\b'
+    - '\bklick(?:e|en)? (?:hier|auf|unten)\b'
+    - '\bhier klicken\b'
+    - '\b(?:folgenden|untenstehenden|nachstehenden|unten stehenden|beigefuegten) (?:link|button|schaltflaeche)\b'
+    - '\b(?:ueber|unter|auf) (?:den|diesen|dem|folgendem|folgenden) link\b'
+    - '\bfolgen sie (?:dem|diesem) link\b'
+    - '\b(?:button|schaltflaeche)\b'
+    - '\bjetzt (?:pruefen|bestaetigen|anmelden|aktualisieren|verifizieren|einloggen|ansehen|oeffnen)\b'
+    - '\b(?:besuchen sie|rufen sie) (?:unsere|die) (?:webseite|website|seite)\b'
+    - '\bqr-?code\b'
+  reply:
+    - '\bantworten sie\b'
+    - '\bantworte\b'
+    - '\bantwort (?:an|auf diese)\b'
+    - '\bschreiben sie (?:uns|mir)\b'
+    - '\bschreib mir\b'
+    - '\bmelden sie sich (?:bitte )?(?:bei|umgehend bei) (?:uns|mir)\b'
+    - '\bmelde dich\b'
+    - '\bgib mir (?:kurz )?bescheid\b'
+    - '\bgeben sie (?:mir|uns) (?:kurz )?bescheid\b'
+    - '\b(?:teilen|senden|schicken) sie (?:uns|mir)\b'
+    - '\b(?:sende|schick) mir\b'
+    - '\bkontaktieren sie (?:uns|mich)\b'
+    - '\bper (?:e-?mail|mail) (?:an|zurueck)\b'
+  attachment:
+    - '\bim anhang\b'
+    - '\banbei\b'
+    - '\bbeigefuegt\w*'
+    - '\bangehaengt\w*'
+    - '\bin der anlage\b'
+    - '\b(?:oeffnen|oeffne) sie (?:die|den) (?:datei|anhang|beigefuegte)\b'
+
+questions:
+  asks_credentials:
+    groups:
+      action:
+        - '\bbestaetig\w*'
+        - '\bverifizier\w*'
+        - '\baktualisier\w*'
+        - '\bgeben sie\b.{0,60}\bein\b'
+        - '\beinzugeben\b|\beingeben\b'
+        - '\b(?:melden|loggen) sie sich\b.{0,40}\b(?:an|ein)\b'
+        - '\banmelden\b|\beinloggen\b'
+        - '\bvervollstaendig\w*'
+        - '\bhinterleg\w*'
+        - '\bfreischalt\w*|\breaktivier\w*|\bentsperr\w*'
+        - '\blegitimier\w*|\bidentifizier\w*'
+        - '\bvalidier\w*|\babgleich\w*'
+        - '\bueberpruefen sie\b|\bpruefen sie\b'
+        - '\b(?:teilen|senden|nennen) sie uns\b'
+        - '\bergaenzen sie\b'
+      object:
+        - '\bzugangsdaten\b|\banmeldedaten\b|\blogin-?daten\b|\bloginbereich\b'
+        - '\bpasswort\w*|\bkennwort\w*'
+        - '\bpin\b|\btan\b|\bpushtan\b|\bphotitan\b|\bonline-?banking-?pin\b'
+        - '\bkontodaten\b|\bkontoinformationen\b|\bbankdaten\b'
+        - '\bkreditkart\w*|\bkartendaten\b|\bkartennummer\b|\bpruefziffer\b|\bcvc\b|\bcvv\b'
+        - '\bzahlungs(?:informationen|daten|methode|mittel)\b'
+        - '\bpersoenlichen? daten\b|\bpersonenbezogene\w* daten\b|\bkundendaten\b|\bangaben\b'
+        - '\bidentitaet\b|\bpersonalausweis\w*|\bausweis\w*|\bvideo-?ident\b'
+        - '\b(?:benutzer|kunden)?konto\b|\bbenutzername\b|\bonline-?banking\b|\bkundenkonto\b'
+        - '\bsicherheitsfragen?\b|\bsteuer-?id\b|\bsozialversicherungsnummer\b|\bgeburtsdatum\b'
+        - '\blieferadresse\b|\brechnungsadresse\b|\bapple-?id\b'
+      problem:
+        - '\beingeschraenkt\w*|\beinschraenkung\w*'
+        - '\bgesperrt\b|\bsperrung\b|\bdeaktiviert\b|\bstillgelegt\b'
+        - '\bungewoehnliche\w* (?:aktivitaet|anmeldung|zugriff)\w*'
+        - '\bverdaechtig\w*|\bunbefugt\w*|\bunberechtigt\w*'
+        - '\bsicherheitsgruend\w*|\bsicherheitsueberpruefung\b|\bsicherheitsupdate\b|\bsicherheitshinweis\b'
+        - '\bdatenabgleich\b|\bpsd2\b|\bneue\w* (?:eu-?)?richtlinie\w*|\bgesetzlich\w* vorgeschrieben\b'
+        - '\babgelaufen\b|\blaeuft\b.{0,20}\bab\b|\bverfaellt\b'
+        - '\bkonnte nicht zugestellt\b|\bzustellung\w* (?:fehlgeschlagen|nicht moeglich)\b'
+        - '\bfehlgeschlagen\w*|\bunvollstaendig\w*|\bveraltet\w*'
+    suppress:
+      - '\b(?:bestaetigen|verifizieren) sie (?:bitte )?ihre (?:e-?mail-?adresse|anmeldung zum newsletter)\b'
+      - '\bnewsletter\b'
+      - '\bdouble-?opt-?in\b'
+      - '\bregistrierung (?:abzuschliessen|abschliessen)\b'
+      - '\bwir werden sie (?:niemals|nie) (?:nach|um)\b'
+      - '\bgeben sie (?:niemals|nie)\b'
+
+  asks_payment:
+    groups:
+      verb:
+        - '\bueberweis\w*'
+        - '\bbezahl\w*|\bzahlen sie\b|\bzu zahlen\b|\bzahlung\b'
+        - '\bbegleich\w*|\bentricht\w*|\beinzahl\w*|\bnachzahl\w*'
+        - '\b(?:kaufen|erwerben|besorgen) sie\b|\bkaufe\b|\bbesorge\b'
+        - '\baufladen\b|\bsenden sie\b.{0,30}\b(?:betrag|geld|euro|bitcoin)\b'
+      instrument:
+        - '\d+(?:[.,]\d{2})?\s?(?:€|eur\b|euro\b)'
+        - '€\s?\d'
+        - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}'
+        - '\bgutschein\w*|\bgeschenkkarte\w*|\bguthabenkarte\w*|\bpaysafecard\b|\bitunes-?karte\b|\bgoogle-?play-?karte\w*|\bsteam-?karte\w*|\bapple-?gift\w*'
+        - '\bbitcoin\w*|\bbtc\b|\bkrypto\w*|\bwallet\b|\busdt\b'
+      object:
+        - '\brechnung\w*'
+        - '\boffene\w* (?:betrag|posten|forderung|rechnung|summe)\b|\bausstehend\w*'
+        - '\bmahnung\b|\bzahlungserinnerung\b|\bforderung\b|\binkasso\w*'
+        - '\bgebuehr\w*|\bzollgebuehr\w*|\bnachporto\b|\bversandkosten\b'
+        - '\bbussgeld\w*|\bverwarngeld\w*|\bstrafe\b|\brueckstand\b|\bsaeumniszuschlag\b'
+    suppress:
+      - '\blastschrift\w*'
+      - '\bwird (?:automatisch |in den naechsten tagen )?(?:abgebucht|eingezogen)\b'
+      - '\bbereits (?:bezahlt|beglichen)\b'
+      - '\bkein(?:e)? (?:weitere )?(?:aktion|zahlung) (?:erforderlich|noetig)\b'
+      - '\bzahlung\b.{0,30}\b(?:ist )?(?:eingegangen|erhalten)\b|\bvielen dank fuer ihre zahlung\b'
+    extra_cta:
+      - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}'
+      - '\bbitcoin-?adresse\b|\bwallet-?adresse\b'
+
+  asks_bank_change:
+    groups:
+      change:
+        - '\bneue\w* bankverbindung\b|\bgeaendert\w* bankverbindung\b|\baktualisiert\w* bankverbindung\b'
+        - '\bbankverbindung\b.{0,40}\b(?:geaendert|gewechselt|umgestellt|aktualisiert)\b'
+        - '\bneue\w* (?:bank)?konto(?:verbindung|daten|nummer)?\b|\bneue\w* kontodaten\b|\bneue\w* iban\b'
+        - '\bkontoaenderung\b|\bkontowechsel\b|\bbankwechsel\b|\baenderung (?:unserer|der) bankverbindung\b'
+        - '\bnicht mehr (?:auf|an) (?:das|unser) (?:alte|bisherige)\w*\b'
+        - '\bab sofort (?:auf|an) (?:folgende|das folgende|unser neues)\b'
+        - '\b(?:alte|bisherige)\w* (?:konto|bankverbindung)\b.{0,40}\b(?:nicht mehr|geschlossen|gekuendigt|aufgeloest)\b'
+      detail:
+        - '\biban\b|\bbic\b|\bswift\b'
+        - '\bkontonummer\b|\bbankleitzahl\b|\bblz\b'
+        - '\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}'
+      future:
+        - '\bkuenftig\w*|\bzukuenftig\w*|\bab sofort\b'
+        - '\balle (?:weiteren|folgenden|offenen|kuenftigen)\b'
+        - '\bnaechste\w* (?:zahlung|ueberweisung|rechnung)\b|\bausstehende\w* rechnung\w*'
+        - '\bbis auf weiteres\b|\bab dem \d{1,2}\.'
+    extra_cta:
+      - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}'
+
+  urgency_pressure:
+    groups:
+      deadline:
+        - '\binnerhalb (?:von )?(?:\d+|zwei|drei|vierundzwanzig|achtundvierzig) (?:stunden|tagen|std\.?)\b'
+        - '\bin den naechsten \d+ (?:stunden|tagen)\b|\bbinnen \d+\b'
+        - '\bbis (?:spaetestens )?(?:heute|morgen)\b|\bheute noch\b|\bnoch heute\b'
+        - '\bsofort\b|\bumgehend\b|\bunverzueglich\b|\bschnellstmoeglich\b'
+        - '\bletzte (?:chance|mahnung|erinnerung|warnung|aufforderung)\b|\bfrist\w*'
+        - '\b(?:24|48|72) stunden\b|\blaeuft (?:heute|bald|morgen) ab\b'
+      consequence:
+        - '\bgesperrt\b|\bsperrung\b|\bsperren\b|\bgeloescht\b|\bloeschung\b'
+        - '\bdeaktiviert\b|\bdeaktivierung\b|\bgekuendigt\b|\bkuendigung\b|\beingeschraenkt\b'
+        - '\bverfaellt\b|\bverfallen\b|\bverlieren\b|\bverlust\b'
+        - '\bmahngebuehr\w*|\bsaeumniszuschlag\b|\binkasso\w*'
+        - '\brechtliche\w* (?:schritte|konsequenzen)\b|\bstrafanzeige\b|\bstrafverfahren\b|\bhaftbefehl\b|\bfestnahme\b'
+        - '\bgerichtlich\w*|\bklage\b|\bzwangsvollstreckung\b|\bpfaendung\b'
+        - '\bzurueck(?:gesendet|geschickt)\b|\bdauerhaft\b'
+      pressure:
+        - '\bhandeln sie (?:jetzt|sofort|umgehend)\b'
+        - '\bdringend\w*'
+        - '\bohne (?:weitere )?verzoegerung\b'
+        - '\bletztmalig\w*|\bwarnung\b'
+    suppress:
+      - '\bnur (?:noch )?heute\b.{0,40}\b(?:rabatt|prozent|%|angebot|sale)\b'
+
+  asks_secrecy:
+    groups:
+      secrecy:
+        - '\bvertraulich\w*|\bdiskret\w*|\bgeheim\w*|\bstillschweigen\b'
+        - '\b(?:sprechen|reden) sie (?:bitte )?mit niemandem\b|\bsprich mit niemandem\b'
+        - '\bniemandem\b|\bunter uns\b|\bbehalten sie (?:das|dies) fuer sich\b|\bbehalte (?:das|es) fuer dich\b'
+        - '\bnicht (?:mit|an) (?:anderen|kollegen|dritte\w*|der buchhaltung)\b'
+      bypass:
+        - '\b(?:kann|koennen) (?:gerade |grade )?nicht telefonieren\b|\bnicht anrufen\b'
+        - '\b(?:bin|sind) (?:gerade |grade )?(?:in einem|im|in einer) (?:meeting|termin|besprechung|konferenz)\b'
+        - '\bnur per (?:e-?mail|mail|whatsapp|sms)\b'
+        - '\bpersoenliche\w* (?:e-?mail|handynummer|nummer)\b|\bwhatsapp\b'
+        - '\bohne (?:die )?(?:uebliche\w*|normale\w*) (?:freigabe|prozess\w*|weg\w*)\b'
+        - '\b(?:nicht|ohne) ueber die (?:uebliche\w*|normale\w*)\b'
+      request:
+        - '\bkannst du\b|\bkoenntest du\b|\bkoennen sie\b|\bkoennten sie\b'
+        - '\bbrauche\b.{0,20}\b(?:deine|ihre) hilfe\b|\beinen gefallen\b'
+        - '\b(?:bist du|sind sie) (?:gerade )?(?:am platz|erreichbar|verfuegbar|im buero)\b'
+        - '\bgutschein\w*|\bueberweisung\b|\bzahlung\b'
+
+  impersonates_brand_or_authority:
+    groups:
+      brand:
+        - '\bpaypal\b|\bamazon\b|\bdhl\b|\bdeutsche post\b|\bhermes\b|\bdpd\b|\bgls\b|\bups\b|\bfedex\b'
+        - '\bsparkasse\b|\bvolksbank\b|\braiffeisenbank\b|\bcommerzbank\b|\bdeutsche bank\b|\bpostbank\b|\bcomdirect\b|\bdkb\b|\bn26\b|\bing\b|\bconsorsbank\b|\btargobank\b|\bhypovereinsbank\b|\bsantander\b'
+        - '\bklarna\b|\bebay\b|\bkleinanzeigen\b|\btelekom\b|\bvodafone\b|\bo2\b|\b1&1\b|\b1und1\b|\bcongstar\b'
+        - '\bmicrosoft\b|\boffice ?365\b|\boutlook\b|\bonedrive\b|\bsharepoint\b|\bapple\b|\bicloud\b|\bgoogle\b|\bnetflix\b|\bspotify\b|\bdisney\+'
+        - '\bwhatsapp\b|\bfacebook\b|\binstagram\b|\blinkedin\b|\bdocusign\b|\bdropbox\b|\bwetransfer\b|\badobe\b'
+        - '\belster\b|\bfinanzamt\w*|\bpolizei\w*|\bbundeskriminalamt\b|\bbka\b|\bzoll\w*|\bbundesagentur\b|\barbeitsagentur\b|\bjobcenter\b'
+        - '\brentenversicherung\b|\bkrankenkasse\b|\btechniker krankenkasse\b|\baok\b|\bbarmer\b|\bdak\b'
+        - '\brundfunkbeitrag\b|\bbeitragsservice\b|\bbundesnetzagentur\b|\bbafin\b|\beuropol\b|\binterpol\b|\bverbraucherzentrale\b'
+        - '\badac\b|\bdeutsche bahn\b|\blidl\b|\baldi\b|\bikea\b|\bmediamarkt\b|\bbooking\.com\b|\bairbnb\b|\bnorton\b|\bmcafee\b'
+        - '\bcoinbase\b|\bbinance\b|\bvisa\b|\bmastercard\b|\bamerican express\b|\bvinted\b|\bzalando\b|\botto\.de\b'
+      self:
+        - '\bihr\w* .{0,30}(?:team|kundenservice|kundendienst|support|serviceteam)\b'
+        - '\bkundenservice\b|\bkundendienst\b|\bsicherheitsteam\b|\bsicherheitsabteilung\b|\bkundenbetreuung\b|\bserviceteam\b|\bsupport-?team\b'
+        - '\bwir (?:von|bei)\b|\bim auftrag (?:von|der|des)\b'
+        - '\babteilung\b|\bbehoerde\w*|\bamtlich\w*|\boffiziell\w*|\bdienststelle\b'
+      official:
+        - '\baktenzeichen\b|\bvorgangsnummer\b|\breferenznummer\b|\bfallnummer\b|\bkundennummer\b'
+        - '\bsendungsnummer\b|\bauftragsnummer\b|\bbescheid\b|\bverfuegung\b|\bermittlungsverfahren\b'
+
+  asks_callback:
+    groups:
+      call:
+        - '\brufen sie\b.{0,60}\ban\b|\brufen sie uns\b'
+        - '\banrufen\b|\banzurufen\b'
+        - '\bkontaktieren sie (?:uns )?telefonisch\b|\btelefonisch (?:erreichen|kontaktieren|melden|unter)\b'
+        - '\bunter (?:der )?(?:telefon)?nummer\b|\bhotline\b|\bwaehlen sie\b|\brueckruf\w*'
+      phone: []
+      context:
+        - '\b(?:zu )?stornieren\b|\bstornierung\b|\bstorno\b|\bwiderruf\w*|\brueckgaengig\b|\bkuendigen\b'
+        - '\brueckerstattung\b|\berstattung\b'
+        - '\bnicht (?:von ihnen )?(?:autorisiert|veranlasst|getaetigt|bestellt|beauftragt)\b'
+        - '\bfalls sie (?:diese|den|die|das)\b.{0,50}\bnicht\b'
+        - '\bkostenlos\w*|\bgebuehrenfrei\w*|\b0800\b'
+        - '\babbuchung\b|\babgebucht\b|\bbelastet\b|\bverlaengert\b|\bverlaengerung\b|\babonnement\b|\babo\b'
+        - '\brund um die uhr\b|\b24/7\b'
+    suppress:
+      - '\bbei (?:fragen|rueckfragen|problemen)\b|\bfuer (?:fragen|rueckfragen)\b|\bfragen\?'
+
+  asks_code_or_command:
+    groups:
+      code:
+        - '\bcode\b.{0,30}\b(?:eingeben|ein|mitteilen|weitergeben|nennen|senden)\b'
+        - '\bgeben sie (?:den|diesen|folgenden) code\b'
+        - '\b(?:bestaetigungscode|sms-?code|einmalpasswort|einmalcode|tan)\b.{0,40}\b(?:mitteilen|senden|weitergeben|nennen|durchgeben)\b'
+        - '\b(?:teilen|nennen|senden|geben) sie uns\b.{0,30}code\b'
+      device_login:
+        - '\bdevicelogin\b|\bmicrosoft\.com/link\b|\bgeraeteanmeldung\b|\bgeraete-?code\b|\bdevice ?code\b'
+      keys:
+        - '\bwindows-?taste\b|\bwin ?\+ ?r\b|\bwindows ?\+ ?r\b|\bausfuehren-?dialog\b'
+        - '\bstrg ?\+ ?v\b|\bctrl ?\+ ?v\b'
+      command:
+        - '\beingabeaufforderung\b|\bpowershell\b|\bcmd\b|\bterminal\b|\bausfuehren-?dialog\b'
+        - '\bbefehl\b|\bfuegen sie\b.{0,60}\bein\b|\bkopieren sie (?:den|diesen|folgenden)\b|\bzwischenablage\b'
+        - '\bmshta\b|\binvoke-\w+|\biwr\b'
+      remote:
+        - '\banydesk\b|\bteamviewer\b|\bquicksupport\b|\bultraviewer\b|\brustdesk\b|\bsupremo\b'
+        - '\bfernwartung\w*|\bfernzugriff\w*|\bremote-?zugriff\b|\bfernsteuerung\b'
+        - '\binstallieren sie\b|\bladen sie\b.{0,40}\bherunter\b'
+      approve:
+        - '\b(?:genehmigen|bestaetigen|erlauben) sie (?:die|diese) (?:anmeldung|anfrage)\b'
+        - '\btippen sie auf (?:genehmigen|ja|bestaetigen)\b'
+      approve_channel:
+        - '\bauthenticator\w*|\bpush-?benachrichtigung\b|\bpush-?nachricht\b'
+    extra_cta:
+      - '\bwin ?\+ ?r\b|\bwindows-?taste\b|\bstrg ?\+ ?v\b|\bctrl ?\+ ?v\b'
+      - '\bladen sie\b.{0,40}\bherunter\b|\binstallieren sie\b'
+      - '\bgeben sie\b.{0,30}\bein\b'
+
+  extortion:
+    groups:
+      claim:
+        - '\b(?:ich habe|wir haben)\b.{0,60}\b(?:gehackt|zugriff|aufgenommen|aufgezeichnet|aufnahmen|videos?)\b'
+        - '\b(?:ihr|dein)\w* (?:geraet|computer|handy|konto|smartphone)\b.{0,30}\bgehackt\b'
+        - '\bmalware\b|\btrojaner\b|\bspyware\b|\bschadsoftware\b'
+        - '\bwebcam\b|\bkamera\b|\bpornoseite\w*|\berwachsenen-?(?:seite|webseite)\w*|\bpornografisch\w*|\bmasturb\w*'
+        - '\b(?:ihr|dein) passwort (?:ist|lautet|war)\b|\bkompromittierend\w*|\bintime\w* (?:aufnahmen|videos?|bilder)\b'
+      threat:
+        - '\b(?:an )?alle (?:ihre |deine )?kontakte\b'
+        - '\bveroeffentlich\w*|\bverbreiten\b|\bblossgestellt\b|\bruinier\w*|\bzerstoer\w*'
+        - '\b(?:familie|freunde|kollegen|arbeitgeber)\b.{0,40}\b(?:senden|schicken|zeigen|erfahren)\b'
+      demand:
+        - '\bbitcoin\w*|\bbtc\b|\bkrypto\w*|\bwallet\b'
+        - '\b\d+ ?(?:usd|eur|euro|dollar|\$|€)'
+        - '\b(?:zahlen|ueberweisen|senden) sie\b'
+        - '\binnerhalb (?:von )?\d+ (?:stunden|tagen)\b'
+    extra_cta:
+      - '\bwallet\b|\bbitcoin-?adresse\b|\bbtc-?adresse\b'
+
+  shared_document_lure:
+    groups:
+      share:
+        - '\bhat\b.{0,60}\b(?:geteilt|freigegeben)\b'
+        - '\b(?:wurde|wurden)\b.{0,60}\b(?:geteilt|freigegeben|gesendet|zugestellt)\b'
+        - '\bneue\w* (?:sprachnachricht|voicemail|sprachmitteilung|faxnachricht|fax|nachricht)\b'
+        - '\bsie haben\b.{0,20}\bneue\w* (?:sprachnachricht|voicemail|fax|datei\w*|dokument\w*)\b'
+        - '\bzur (?:unterschrift|signatur|pruefung|ansicht)\b'
+      view:
+        - '\b(?:dokument|datei|unterlagen|nachricht|rechnung)\w* (?:ansehen|oeffnen|anzeigen|herunterladen|pruefen|abrufen|abhoeren|anhoeren)\b'
+        - '\b(?:jetzt|hier) (?:ansehen|oeffnen|anzeigen|abrufen|abhoeren)\b'
+        - '\bpruefen und (?:unterschreiben|unterzeichnen|signieren)\b|\bzum (?:ansehen|oeffnen|anzeigen)\b'
+      doc:
+        - '\bdokument\w*|\bdatei\w*|\bpdf\b|\bordner\b|\bunterlagen\b'
+        - '\bdocusign\b|\bsharepoint\b|\bonedrive\b|\bdropbox\b|\bwetransfer\b|\bgoogle (?:drive|docs)\b|\badobe\b'
+        - '\bsprachnachricht\b|\bvoicemail\b|\bfax\b'
+
+  scam:
+    groups:
+      story:
+        - '\berbschaft\b|\bnachlass\b|\btestament\b|\bverstorben\w*|\berbe\b|\bwaise\w*|\bwitwe\b'
+        - '\bdiplomat\w*|\brechtsanwalt\b|\banwalt\b|\bbarrister\b|\bbankdirektor\b|\bwohltaetig\w*|\bspende\w*'
+        - '\blotterie\w*|\blotto\b|\bgewinnspiel\w*|\bverlosung\b|\bpreisausschreiben\b|\bausgelost\b|\bgewinner\w*'
+        - '\bsie haben\b.{0,30}\bgewonnen\b'
+        - '\btrading\w*|\bhandelsplattform\b|\bkrypto-?\w*|\binvestier\w*|\binvestition\w*|\bpassive\w* einkommen\b'
+        - '\bverdienen sie\b|\bverdienen\b.{0,30}\b(?:pro|am|im) (?:tag|woche|monat)\b'
+      money:
+        - '\bmillionen\b|\bmio\.?\b'
+        - '\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})? ?(?:euro|€|eur|dollar|usd)\b'
+        - '\bgarantiert\w* (?:rendite|gewinn\w*|einnahmen|ertrag)\b|\brendite von \d+|\b\d+ ?% (?:rendite|gewinn)\b'
+        - '\bpreisgeld\b|\bhauptgewinn\b|\bvermoegen\b'
+      claim:
+        - '\bbeguenstigt\w*|\bsie haben anspruch\b|\bihnen steht\b.{0,30}\bzu\b'
+        - '\b(?:geld|betrag|summe|guthaben|gewinn|auszahlung|vermoegen)\b.{0,40}\b(?:wartet|steht bereit|bereitgestellt|freigegeben)\b'
+        - '\b(?:gewinn|betrag|geld|summe)\w*\b.{0,30}\b(?:abholen|einloesen|beanspruchen|auszahlen|zu erhalten)\b'
+        - '\bbearbeitungsgebuehr\b|\bgebuehr\b.{0,30}\b(?:auszahlung|freigabe)\b|\b(?:transfer|freigabe) (?:der|des) (?:gelder|summe|betrags|vermoegens)\b'
+        - '\brisikofrei\b|\bohne risiko\b|\bvertrauenswuerdige\w* (?:person|partner)\b'
+    extra_cta:
+      - '\bwallet\b|\bbitcoin-?adresse\b|\biban\b'
+
+  spam:
+    groups:
+      offer:
+        - '\b\d+ ?% (?:rabatt|nachlass|reduziert|guenstiger)\b|\brabatt\w*|\bsonderangebot\w*|\bschnaeppchen\b'
+        - '\bgratis\b|\bumsonst\b|\bnur (?:fuer kurze zeit|solange der vorrat)\b|\blimitiert\w*'
+      topic:
+        - '\bviagra\b|\bcialis\b|\bpotenz\w*|\berektion\w*|\babnehmen\b|\bgewichtsverlust\b|\bschlankheit\w*'
+        - '\bcasino\w*|\bfreispiele\b|\bsportwetten\b|\bkredit ohne schufa\b|\bsofortkredit\w*'
+        - '\bsingles\b|\bsexkontakte?\b|\bseitensprung\b|\bbacklinks?\b|\bseo\b|\bnebenverdienst\b|\bheimarbeit\b|\breplica\w*'
+      buy:
+        - '\bjetzt (?:kaufen|bestellen|zugreifen|sichern)\b|\bhier (?:bestellen|kaufen)\b|\bbestellen sie\b'

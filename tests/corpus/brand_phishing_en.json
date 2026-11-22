@@ -1,0 +1,11 @@
+{
+  "notes": "Look-alike with digit zero, plain text link to the same look-alike domain.",
+  "expect": [
+    "ID_LOOKALIKE_BRAND",
+    "ID_BRAND_NOT_OFFICIAL",
+    "LINK_LOOKALIKE",
+    "CLS_ASKS_CREDENTIALS",
+    "CLS_CAT_PHISHING",
+    "CLS_URGENCY"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "broker": {
+    "listed": {
+      "paket-zoll-gebuehr.example": [
+        "certpl"
+      ]
+    }
+  },
+  "expect": [
+    "FEED_SENDER_HIT",
+    "LINK_FEED_HIT",
+    "CLS_ASKS_PAYMENT",
+    "CLS_URGENCY"
+  ]
+}

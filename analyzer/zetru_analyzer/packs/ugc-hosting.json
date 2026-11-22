@@ -1,0 +1,20 @@
+{
+  "id": "zetru-ugc-hosting",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "notes": ["Hosts where anyone can publish content under the provider's domain. A link host matches when it equals an entry or is a subdomain of it. Used for LINK_UGC_HOSTING and to skip pointless domain-age lookups."],
+  "hosts": [
+    "pages.dev", "workers.dev", "r2.dev", "trycloudflare.com",
+    "sites.google.com", "docs.google.com", "drive.google.com", "forms.gle", "storage.googleapis.com", "firebaseapp.com", "web.app", "appspot.com", "googleusercontent.com",
+    "forms.office.com", "1drv.ms", "onedrive.live.com", "sharepoint.com", "azurewebsites.net", "blob.core.windows.net", "web.core.windows.net",
+    "s3.amazonaws.com", "amplifyapp.com",
+    "github.io", "gitlab.io", "raw.githubusercontent.com", "gist.github.com",
+    "netlify.app", "vercel.app", "herokuapp.com", "glitch.me", "replit.app", "repl.co", "onrender.com", "fly.dev",
+    "ngrok.io", "ngrok-free.app", "ngrok.app",
+    "wixsite.com", "weebly.com", "webflow.io", "blogspot.com", "wordpress.com", "square.site", "godaddysites.com", "jimdosite.com", "jimdofree.com", "mystrikingly.com", "carrd.co", "canva.site", "notion.site", "framer.website",
+    "dropbox.com", "dl.dropboxusercontent.com", "wetransfer.com", "we.tl",
+    "typeform.com", "jotform.com", "surveymonkey.com",
+    "ipfs.io", "dweb.link", "gateway.pinata.cloud", "cloudflare-ipfs.com"
+  ],
+  "review": ["framer.website, canva.site and onrender.com believed user-content hosts; verify."]
+}

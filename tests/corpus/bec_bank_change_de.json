@@ -1,0 +1,10 @@
+{
+  "notes": "Freemail executive persona announcing new bank details (text only).",
+  "expect": [
+    "CLS_BANK_CHANGE"
+  ],
+  "forbid": [
+    "ID_LOOKALIKE_BRAND",
+    "CLS_ABSTAIN"
+  ]
+}

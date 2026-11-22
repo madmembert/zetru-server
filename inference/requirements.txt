@@ -1,0 +1,2 @@
+# Runtime dependencies of the inference service (licences in server/THIRD_PARTY_PYTHON.md). Pinned.
+PyYAML==6.0.4
