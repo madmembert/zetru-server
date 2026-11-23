@@ -1,7 +1,10 @@
 """Minimal asyncio HTTP/1.1 client for plain-HTTP calls on the internal network (inference, lookup).
 
 No threads are used anywhere in the supervisor (host names are resolved synchronously with a short cache
-and connections are opened to the numeric address), so forking stays safe.
+and connections are opened to the numeric address), so forking stays safe. A failed resolution is cached for
+5 s and a known address is kept for up to 5 minutes while resolution fails, so an unreachable Docker DNS can block
+the event loop at most once per 5 s (security review PY-22). Request bodies are sent as UTF-8 JSON (a state of
+non-ASCII text would otherwise grow up to sixfold through \\u escapes, PY-03).
 """
 
 from __future__ import annotations
@@ -14,7 +17,10 @@ import urllib.parse
 
 MAX_RESPONSE = 512 * 1024
 _CACHE: dict[tuple[str, int], tuple[float, str]] = {}
+_FAILED: dict[tuple[str, int], float] = {}
 _TTL = 30.0
+_NEGATIVE_TTL = 5.0
+_STALE_TTL = 300.0
 
 
 class HttpError(Exception):
@@ -27,9 +33,21 @@ def resolve(host: str, port: int) -> str:
     now = time.monotonic()
     if hit and now - hit[0] < _TTL:
         return hit[1]
-    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    if not infos:
+    failed_at = _FAILED.get(key)
+    if failed_at is not None and now - failed_at < _NEGATIVE_TTL:
+        if hit and now - hit[0] < _STALE_TTL:
+            return hit[1]
         raise HttpError("resolve")
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        infos = []
+    if not infos:
+        _FAILED[key] = now
+        if hit and now - hit[0] < _STALE_TTL:
+            return hit[1]
+        raise HttpError("resolve")
+    _FAILED.pop(key, None)
     address = infos[0][4][0]
     _CACHE[key] = (now, address)
     return address
@@ -43,13 +61,11 @@ async def request_json(method: str, url: str, body: dict | None = None, timeout:
     path = parts.path or "/"
     if parts.query:
         path += "?" + parts.query
-    payload = b"" if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
+    payload = b"" if body is None else json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8", "replace")
 
     async def run() -> tuple[int, dict]:
-        try:
-            address = resolve(parts.hostname, port)
-        except OSError:
-            raise HttpError("resolve") from None
+        address = resolve(parts.hostname, port)
         reader, writer = await asyncio.open_connection(address, port)
         try:
             head = (f"{method} {path} HTTP/1.1\r\nHost: {parts.hostname}\r\nConnection: close\r\n"

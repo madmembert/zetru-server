@@ -5,12 +5,18 @@
   GET  /internal/healthz
 
 Error bodies use fixed messages per code (§11.6) and never contain request data.
+
+Request hardening (security review PY-19, PY-20): both POST endpoints need a valid `X-Zetru-Tenant` UUID;
+an analyze request is admitted (or answered `503 busy` and closed) before its body is read, bodies being read
+count against the worker + queue capacity, and at most `2 × capacity + 16` connections are open at once. Chunk
+sizes are 1–8 hex digits. `/internal/healthz` answers 503 when the zygote is not working.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 
 from . import framing, logs
@@ -18,6 +24,7 @@ from .supervisor import AnalysisTimeout, Busy, Supervisor, Unavailable
 
 MAX_HEAD = 16 * 1024
 MAX_HEADERS = 64
+_CHUNK_SIZE = re.compile(rb"[0-9A-Fa-f]{1,8}")
 IDLE_TIMEOUT_S = 30.0
 BODY_TIMEOUT_S = 30.0
 MESSAGES = {
@@ -87,10 +94,10 @@ async def _read_body(reader: asyncio.StreamReader, headers: dict, limit: int) ->
         total = 0
         while True:
             line = await reader.readuntil(b"\r\n")
-            try:
-                size = int(line.split(b";")[0].strip(), 16)
-            except ValueError:
-                raise HttpProblem(400, "bad_request") from None
+            token = line.split(b";")[0].strip()
+            if not _CHUNK_SIZE.fullmatch(token):   # int(…, 16) would also take "-5", "+5", "0x5", "1_0"
+                raise HttpProblem(400, "bad_request")
+            size = int(token, 16)
             if size == 0:
                 await reader.readuntil(b"\r\n")
                 break
@@ -112,9 +119,20 @@ async def _read_body(reader: asyncio.StreamReader, headers: dict, limit: int) ->
 class Server:
     def __init__(self, supervisor: Supervisor):
         self.supervisor = supervisor
+        self.connections = 0
+        self.reading = 0          # analyze bodies being read (they count against the capacity)
+
+    @property
+    def max_connections(self) -> int:
+        return 2 * getattr(self.supervisor, "capacity", 16) + 16
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self.connections += 1
         try:
+            if self.connections > self.max_connections:
+                writer.write(_error(503, "busy", close=True))
+                await writer.drain()
+                return
             while True:
                 close = False
                 try:
@@ -123,10 +141,12 @@ class Server:
                         break
                     method, target, headers = head
                     close = headers.get("connection", "").lower() == "close"
-                    out = await asyncio.wait_for(self.route(reader, method, target, headers), BODY_TIMEOUT_S + 25)
+                    out, must_close = await asyncio.wait_for(self.route(reader, method, target, headers),
+                                                             BODY_TIMEOUT_S + 25)
+                    close = close or must_close
                 except HttpProblem as problem:
                     out, close = _error(problem.status, problem.code, close=True), True
-                except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError):
+                except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError, ValueError):
                     out, close = _error(400, "bad_request", close=True), True
                 writer.write(out)
                 await writer.drain()
@@ -135,33 +155,48 @@ class Server:
         except (ConnectionError, OSError):
             pass
         finally:
+            self.connections -= 1
             try:
                 writer.close()
             except Exception:
                 pass
 
-    async def route(self, reader, method: str, target: str, headers: dict) -> bytes:
+    def _admit(self) -> bool:
+        check = getattr(self.supervisor, "has_capacity", None)
+        return check is None or check(self.reading)
+
+    async def route(self, reader, method: str, target: str, headers: dict) -> tuple[bytes, bool]:
+        """(response, close the connection afterwards)."""
         started = time.monotonic()
         path = target.split("?", 1)[0]
         if method == "GET" and path == "/internal/healthz":
             await _read_body(reader, headers, 0)
-            return _response(200, await self.supervisor.health())
+            health = await self.supervisor.health()
+            return _response(200 if health.get("status") == "ok" else 503, health), False
+        if method == "POST" and path in ("/internal/v1/url/check", "/internal/v1/analyze") \
+                and not framing.valid_tenant(headers.get("x-zetru-tenant")):
+            return _error(400, "bad_request", close=True), True   # body not read: the connection cannot be reused
         if method == "POST" and path == "/internal/v1/url/check":
             body = await asyncio.wait_for(_read_body(reader, headers, 64 * 1024), BODY_TIMEOUT_S)
             try:
                 items = framing.parse_url_check(body)
             except framing.BadRequest:
-                return _error(400, "bad_request")
-            return _response(200, self.supervisor.url_check(items))
+                return _error(400, "bad_request"), False
+            return _response(200, self.supervisor.url_check(items)), False
         if method == "POST" and path == "/internal/v1/analyze":
             tenant = headers.get("x-zetru-tenant")
             try:
                 policy = framing.parse_policy(headers.get("x-zetru-policy"))
             except framing.BadRequest:
-                await _read_body(reader, headers, framing.HARD_MAX_MAIL + framing.MAX_META + 4)
-                return _error(400, "bad_request")
+                return _error(400, "bad_request", close=True), True
+            if not self._admit():
+                return _error(503, "busy", close=True), True       # decided before buffering up to 20 MB
             limit = policy["max_mail_bytes"] + framing.MAX_META + 4
-            body = await asyncio.wait_for(_read_body(reader, headers, limit), BODY_TIMEOUT_S)
+            self.reading += 1
+            try:
+                body = await asyncio.wait_for(_read_body(reader, headers, limit), BODY_TIMEOUT_S)
+            finally:
+                self.reading -= 1
             status, code = 200, None
             try:
                 meta, raw = framing.parse_analyze(body, policy["max_mail_bytes"])
@@ -182,9 +217,9 @@ class Server:
                 logs.error("request_failed", endpoint="analyze", status=status, error_class=code or "",
                            tenant=tenant if framing.valid_tenant(tenant) else "invalid",
                            duration_bucket=logs.duration_bucket(time.monotonic() - started))
-            return out
+            return out, False
         await _read_body(reader, headers, 64 * 1024)
-        return _error(404, "not_found")
+        return _error(404, "not_found"), False
 
 
 async def serve(supervisor: Supervisor, host: str, port: int) -> None:

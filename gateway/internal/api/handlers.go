@@ -33,6 +33,10 @@ type enrollRequest struct {
 	Platform        string `json:"platform"`
 }
 
+// validLabel accepts a device label of at most 40 characters without control characters. Format
+// characters (bidi controls, zero-width characters), line separators and private-use characters
+// are not refused but removed when the label is stored (registry.CleanLabel, GO-18): legitimate
+// device names can contain a zero-width joiner inside an emoji sequence.
 func validLabel(label string) bool {
 	if !utf8.ValidString(label) || utf8.RuneCountInString(label) > 40 {
 		return false
@@ -46,14 +50,10 @@ func validLabel(label string) bool {
 }
 
 func (s *Server) handleEnroll(r *http.Request, rc *reqCtx) response {
-	// 5 attempts per minute per source address; the address lives only in this in-memory table.
-	if ok, wait := s.enrollRate.Allow("enroll|"+remoteHost(r), enrollPerMinute); !ok {
-		return retryResponse("rate_limited", wait)
-	}
 	if r.ContentLength > enrollBodyLimit {
 		return errorResponse("bad_request")
 	}
-	body, _, err := readBody(r.Body, r.ContentLength, enrollBodyLimit)
+	body, _, err := s.readBody(r, rc, enrollBodyLimit)
 	rc.bodySize = int64(len(body))
 	if err != nil {
 		return errorResponse("bad_request")
@@ -65,6 +65,20 @@ func (s *Server) handleEnroll(r *http.Request, rc *reqCtx) response {
 	}
 	if _, err := auth.ParseDevicePublicKey(req.DevicePublicKey); err != nil {
 		return errorResponse("bad_request")
+	}
+	// Rate limits apply to unknown tokens only (GO-13): 5 per minute per client address (IPv6: per
+	// /64) and 60 per minute in total. A token the operator issued always gets through, so nobody
+	// can block pairing by guessing, also behind NAT or Docker's userland proxy. Unknown tokens are
+	// answered from memory without touching the registry file (GO-12). The address lives only in
+	// this in-memory table.
+	if errors.Is(s.opt.Registry.TokenStatus(req.Token), registry.ErrTokenUnknown) {
+		if ok, wait := s.enrollRate.Allow("enroll|"+ClientKey(r.RemoteAddr), enrollPerMinute); !ok {
+			return retryResponse("rate_limited", wait)
+		}
+		if ok, wait := s.enrollRate.Allow("enroll|*", enrollUnknownPerMin); !ok {
+			return retryResponse("rate_limited", wait)
+		}
+		return errorResponse("forbidden")
 	}
 	device, err := s.opt.Registry.Enroll(req.Token, req.DevicePublicKey, req.DeviceLabel)
 	switch {
@@ -82,7 +96,7 @@ func (s *Server) handleEnroll(r *http.Request, rc *reqCtx) response {
 	if err != nil {
 		return errorResponse("forbidden")
 	}
-	rc.deviceID, rc.tenantID = device.ID, tenant.ID
+	rc.deviceID, rc.tenantID, rc.authed = device.ID, tenant.ID, true
 	return jsonResponse(200, map[string]any{
 		"device_id": device.ID,
 		"tenant_id": tenant.ID,
@@ -235,7 +249,7 @@ func (s *Server) handleDevices(r *http.Request, rc *reqCtx) response {
 		if d.Revoked() {
 			continue
 		}
-		list = append(list, deviceEntry{DeviceID: d.ID, Label: d.Label, CreatedAt: d.CreatedAt,
+		list = append(list, deviceEntry{DeviceID: d.ID, Label: registry.CleanLabel(d.Label), CreatedAt: d.CreatedAt,
 			LastSeenDay: d.LastSeenDay, Current: d.ID == a.device.ID})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt < list[j].CreatedAt })

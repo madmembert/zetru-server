@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"strconv"
 	"testing"
 	"time"
@@ -28,12 +29,22 @@ func signCanonical(t *testing.T, key *ecdsa.PrivateKey, canonical string) string
 	return base64.StdEncoding.EncodeToString(sig)
 }
 
+const testDevice = "6f1c2d3e-4a5b-4c6d-8e7f-8091a2b3c4d5"
+
 func TestCanonicalStringFormat(t *testing.T) {
-	got := CanonicalString("POST", "/v1/analyze?x=1", "1800000000", "AAAAAAAAAAAAAAAAAAAAAA", BodyHash(nil))
-	want := "ZETRU1\nPOST\n/v1/analyze?x=1\n1800000000\nAAAAAAAAAAAAAAAAAAAAAA\n" +
+	got := CanonicalString("POST", "/v1/analyze?x=1", testDevice, "1800000000", "AAAAAAAAAAAAAAAAAAAAAA", BodyHash(nil))
+	want := "ZETRU1\nPOST\n/v1/analyze?x=1\n" + testDevice + "\n1800000000\nAAAAAAAAAAAAAAAAAAAAAA\n" +
 		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	if got != want {
 		t.Fatalf("canonical string:\n%q\nwant\n%q", got, want)
+	}
+	sum := sha256.Sum256([]byte(want))
+	if RequestBinding(got) != hex.EncodeToString(sum[:]) {
+		t.Fatal("request binding is not the hex SHA-256 of the canonical string")
+	}
+	// A request without headers (enrolment, healthz) binds empty lines.
+	if CanonicalString("POST", "/v1/enroll", "", "", "", "") != "ZETRU1\nPOST\n/v1/enroll\n\n\n\n" {
+		t.Fatal("missing headers must be empty lines")
 	}
 }
 
@@ -47,16 +58,19 @@ func TestSignatureVerification(t *testing.T) {
 	body := []byte("From: a@b.de\r\n\r\nhi")
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	n := newNonce()
-	canonical := CanonicalString("POST", "/v1/analyze", ts, n, BodyHash(body))
+	canonical := CanonicalString("POST", "/v1/analyze", testDevice, ts, n, BodyHash(body))
 	sig := signCanonical(t, key, canonical)
 	if err := VerifySignature(pub, canonical, sig); err != nil {
 		t.Fatalf("valid signature rejected: %v", err)
 	}
-	if err := VerifySignature(pub, CanonicalString("POST", "/v1/url/check", ts, n, BodyHash(body)), sig); err != ErrBadSignature {
+	if err := VerifySignature(pub, CanonicalString("POST", "/v1/url/check", testDevice, ts, n, BodyHash(body)), sig); err != ErrBadSignature {
 		t.Fatalf("path swap accepted: %v", err)
 	}
-	if err := VerifySignature(pub, CanonicalString("POST", "/v1/analyze", ts, n, BodyHash([]byte("x"))), sig); err != ErrBadSignature {
+	if err := VerifySignature(pub, CanonicalString("POST", "/v1/analyze", testDevice, ts, n, BodyHash([]byte("x"))), sig); err != ErrBadSignature {
 		t.Fatalf("body swap accepted: %v", err)
+	}
+	if err := VerifySignature(pub, CanonicalString("POST", "/v1/analyze", "00000000-0000-4000-8000-000000000000", ts, n, BodyHash(body)), sig); err != ErrBadSignature {
+		t.Fatalf("device swap accepted: %v", err)
 	}
 	if err := VerifySignature(pub, canonical, "not base64!"); err != ErrBadSignature {
 		t.Fatalf("garbage signature accepted: %v", err)
@@ -113,8 +127,14 @@ func TestNonceCache(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	c := NewNonceCache(func() time.Time { return now }, 3)
 	n := newNonce()
+	if c.Seen("dev", n) {
+		t.Fatal("unknown nonce reported as seen")
+	}
 	if err := c.Reserve("dev", n); err != nil {
 		t.Fatal(err)
+	}
+	if !c.Seen("dev", n) || c.Seen("other", n) {
+		t.Fatal("Seen does not reflect the reservation")
 	}
 	if err := c.Reserve("dev", n); err != ErrReplayedNonce {
 		t.Fatalf("replay accepted: %v", err)
@@ -149,15 +169,21 @@ func TestResponseSignature(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	signer := ResponseSigner{Key: priv}
 	body := []byte(`{"ok":true}`)
-	sig := signer.Sign("abc", 200, body)
+	binding := RequestBinding(CanonicalString("GET", "/v1/devices", testDevice, "1800000000", "abc", BodyHash(nil)))
+	sig := signer.Sign("abc", 200, body, binding)
 	raw, _ := base64.StdEncoding.DecodeString(sig)
-	if !ed25519.Verify(pub, []byte("ZETRU1-RESP\nabc\n200\n"+BodyHash(body)), raw) {
-		t.Fatal("response signature does not verify")
+	if !ed25519.Verify(pub, []byte("ZETRU1-RESP\nabc\n200\n"+BodyHash(body)+"\n"+binding), raw) {
+		t.Fatal("response signature does not verify over the 5-line message")
 	}
-	if !VerifyResponse(pub, "abc", 200, body, sig) {
+	if !VerifyResponse(pub, "abc", 200, body, binding, sig) {
 		t.Fatal("VerifyResponse rejects a valid signature")
 	}
-	if VerifyResponse(pub, "abc", 500, body, sig) || VerifyResponse(pub, "abd", 200, body, sig) {
+	if VerifyResponse(pub, "abc", 500, body, binding, sig) || VerifyResponse(pub, "abd", 200, body, binding, sig) {
 		t.Fatal("signature must bind status and nonce")
+	}
+	// A proxy that sends its own request with the victim's nonce gets a different binding.
+	own := RequestBinding(CanonicalString("GET", "/v1/devices", "00000000-0000-4000-8000-000000000000", "1800000000", "abc", BodyHash(nil)))
+	if VerifyResponse(pub, "abc", 200, body, own, sig) {
+		t.Fatal("signature must bind the request")
 	}
 }

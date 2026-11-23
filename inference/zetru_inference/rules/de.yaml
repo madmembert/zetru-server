@@ -2,7 +2,7 @@
 # normalised text: NFKC, case-folded, homoglyph-folded, umlauts folded (ä→ae, ö→oe, ü→ue, ß→ss).
 # Evidence: none (no group), weak (one group), moderate (two groups), strong (two groups within the same or
 # adjacent sentence plus a call to action in that sentence or the one before/after).
-version: rules-1.0.0
+version: rules-1.1.0
 language: de
 
 cta:
@@ -98,7 +98,7 @@ questions:
         - '\b(?:kaufen|erwerben|besorgen) sie\b|\bkaufe\b|\bbesorge\b'
         - '\baufladen\b|\bsenden sie\b.{0,30}\b(?:betrag|geld|euro|bitcoin)\b'
       instrument:
-        - '\d+(?:[.,]\d{2})?\s?(?:€|eur\b|euro\b)'
+        - '(?<!\d)\d{1,9}(?:[.,]\d{2})?\s?(?:€|eur\b|euro\b)'
         - '€\s?\d'
         - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}'
         - '\bgutschein\w*|\bgeschenkkarte\w*|\bguthabenkarte\w*|\bpaysafecard\b|\bitunes-?karte\b|\bgoogle-?play-?karte\w*|\bsteam-?karte\w*|\bapple-?gift\w*'
@@ -225,7 +225,7 @@ questions:
         - '\babbuchung\b|\babgebucht\b|\bbelastet\b|\bverlaengert\b|\bverlaengerung\b|\babonnement\b|\babo\b'
         - '\brund um die uhr\b|\b24/7\b'
     suppress:
-      - '\bbei (?:fragen|rueckfragen|problemen)\b|\bfuer (?:fragen|rueckfragen)\b|\bfragen\?'
+      - '(?:\bbei (?:fragen|rueckfragen|problemen)\b|\bfuer (?:fragen|rueckfragen)\b|\bfragen\?)[^.!?;]{0,80}'
 
   asks_code_or_command:
     groups:

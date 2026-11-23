@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 MAX_HEADERS = 2000
 _BARE_LF = re.compile(rb"(?<!\r)\n")
-_HEADER_NAME = re.compile(rb"^[\x21-\x39\x3b-\x7e]+$")
+_HEADER_NAME = re.compile(rb"[\x21-\x39\x3b-\x7e]+")
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def split_message(raw: bytes) -> tuple[list[RawHeader], bytes, int]:
                 _append(headers, current_name, current)
             colon = line.find(b":")
             name = line[:colon] if colon > 0 else b""
-            if colon > 0 and _HEADER_NAME.match(name.rstrip(b" \t")):
+            if colon > 0 and _HEADER_NAME.fullmatch(name.rstrip(b" \t")):
                 current_name = name.rstrip(b" \t")
                 current = [line]
             else:

@@ -71,7 +71,7 @@ type fakeAnalyzer struct {
 	lastBody   []byte
 	lastTenant string
 	lastPolicy string
-	mode       string // "", "busy", "timeout", "reset", "badsha", "badbands", "badsignal"
+	mode       string // "", "busy", "timeout", "slow", "reset", "badsha", "badbands", "badsignal", "casesignal", "urlcase"
 	bands      []string
 	signals    []map[string]any
 	urlCalls   int
@@ -97,6 +97,13 @@ func (f *fakeAnalyzer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		var req urlCheckRequest
 		_ = json.Unmarshal(body, &req)
+		if mode == "urlcase" {
+			// GO-07 probe: an invalid "results" array for an unasked hash, then a valid "Results".
+			valid := `[{"url_sha256":"` + req.Items[0].URLSHA256 + `","hit":false,"signal":null}]`
+			_, _ = w.Write([]byte(`{"results":[{"url_sha256":"` + strings.Repeat("e", 64) +
+				`","hit":true,"signal":{"id":"not valid <b>","fallback_severity":"bogus"}}],"Results":` + valid + `,"feeds":[]}`))
+			return
+		}
 		var results []map[string]any
 		for _, it := range req.Items {
 			hit := it.Host == "bad.example.test"
@@ -121,6 +128,8 @@ func (f *fakeAnalyzer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case "timeout":
 			time.Sleep(400 * time.Millisecond)
+		case "slow":
+			time.Sleep(150 * time.Millisecond) // finishes within the gateway's 200 ms test timeout
 		case "reset":
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			_ = conn.Close()
@@ -137,12 +146,17 @@ func (f *fakeAnalyzer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if mode == "badbands" {
 			b = []string{"zz", "1"}
 		}
-		sigs := signals
-		if sigs == nil {
-			sigs = []map[string]any{}
+		sigs := []any{}
+		for _, sg := range signals {
+			sigs = append(sigs, sg)
 		}
 		if mode == "badsignal" {
 			sigs = append(sigs, map[string]any{"id": "lower_case", "fallback_severity": "info"})
+		}
+		if mode == "casesignal" {
+			// GO-07 probe: encoding/json matches "ID" to the id field (last wins), a case-sensitive
+			// reader sees "id".
+			sigs = append(sigs, json.RawMessage(`{"id":"BULK_CAMPAIGN_CONFIRMED","fallback_severity":"danger","ID":"XYZ_OK"}`))
 		}
 		// A stale BULK_CAMPAIGN signal from the analyzer must be dropped by the gateway.
 		sigs = append(sigs, map[string]any{"id": "BULK_CAMPAIGN_CONFIRMED", "fallback_severity": "danger"})
@@ -189,7 +203,10 @@ func (e *testEnv) advance(d time.Duration) {
 	e.clockMu.Unlock()
 }
 
-func newEnv(t *testing.T) *testEnv {
+func newEnv(t *testing.T) *testEnv { return newEnvWith(t, nil) }
+
+// newEnvWith is newEnv with a hook that adjusts the server options.
+func newEnvWith(t *testing.T, adjust func(*Options)) *testEnv {
 	t.Helper()
 	e := &testEnv{t: t, dir: t.TempDir(), clock: time.Now(), analyzer: &fakeAnalyzer{bands: []string{"1111", "2222", "3333", "4444"}},
 		reqLog: &syncBuffer{}, errLog: &syncBuffer{}}
@@ -207,7 +224,7 @@ func newEnv(t *testing.T) *testEnv {
 	if e.tenant, err = e.reg.CreateTenant("home"); err != nil {
 		t.Fatal(err)
 	}
-	counters, _ := campaign.Open("", e.mgr.Material().Fingerprint, e.now)
+	counters, _ := campaign.Open("", e.mgr.Material().Fingerprint, e.now, campaign.Limits{})
 	quota, _ := limits.OpenQuota("", e.now)
 	// The sandbox this was developed in forbids binding TCP ports, so both servers run on in-memory
 	// listeners (net.Pipe); TLS and HTTP run unchanged on top.
@@ -216,10 +233,14 @@ func newEnv(t *testing.T) *testEnv {
 	go func() { _ = as.Serve(analyzerLn) }()
 	t.Cleanup(func() { _ = as.Close() })
 	profile, _ := config.ProfileFor("pi")
-	e.srv = New(Options{Profile: profile, ServerName: "Test server", AnalyzerURL: "http://analyzer.test:8081", Registry: e.reg,
+	opt := Options{Profile: profile, ServerName: "Test server", AnalyzerURL: "http://analyzer.test:8081", Registry: e.reg,
 		Keys: e.mgr, Campaign: counters, Quota: quota, RequestLog: reqlog.NewWriterLogger(e.reqLog),
 		ErrorLog: slog.New(slog.NewTextHandler(e.errLog, nil)), Now: e.now, AnalyzeTimeout: 200 * time.Millisecond,
-		HTTPClient: &http.Client{Transport: &http.Transport{DialContext: analyzerLn.Dial}}})
+		HTTPClient: &http.Client{Transport: &http.Transport{DialContext: analyzerLn.Dial}}}
+	if adjust != nil {
+		adjust(&opt)
+	}
+	e.srv = New(opt)
 
 	// The gateway serves real TLS 1.3 with the production TLS settings; the client pins the key.
 	e.ln = newMemListener()
@@ -341,8 +362,17 @@ func (r result) code() string {
 	return e.Error.Code
 }
 
-// do sends a signed request and always checks the response signature against the request nonce.
+// do sends a signed request and always checks the response signature against the request nonce
+// and the request binding.
 func (e *testEnv) do(d device, method, path string, body []byte, o reqOpts) result {
+	e.t.Helper()
+	req, respNonce := e.signedRequest(d, method, path, bytes.NewReader(body), body, o)
+	return e.send(req, respNonce)
+}
+
+// signedRequest builds a request signed as the app signs it (§4.4) over the hash of hashed (or
+// o.hashBody) and returns it with the nonce its response must be signed over.
+func (e *testEnv) signedRequest(d device, method, path string, bodyReader io.Reader, body []byte, o reqOpts) (*http.Request, string) {
 	e.t.Helper()
 	if o.nonce == "" {
 		o.nonce = newNonce()
@@ -363,13 +393,13 @@ func (e *testEnv) do(d device, method, path string, body []byte, o reqOpts) resu
 	sum := sha256.Sum256(hashed)
 	contentHash := hex.EncodeToString(sum[:])
 	ts := strconv.FormatInt(o.timestamp, 10)
-	canonical := "ZETRU1\n" + method + "\n" + path + "\n" + ts + "\n" + o.nonce + "\n" + contentHash
+	canonical := "ZETRU1\n" + method + "\n" + path + "\n" + o.deviceID + "\n" + ts + "\n" + o.nonce + "\n" + contentHash
 	digest := sha256.Sum256([]byte(canonical))
 	sig, err := ecdsa.SignASN1(rand.Reader, o.signer, digest[:])
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	req, _ := http.NewRequest(method, e.base+path, bytes.NewReader(body))
+	req, _ := http.NewRequest(method, e.base+path, bodyReader)
 	req.Header.Set("Zetru-Device", o.deviceID)
 	req.Header.Set("Zetru-Timestamp", ts)
 	req.Header.Set("Zetru-Nonce", o.nonce)
@@ -384,21 +414,36 @@ func (e *testEnv) do(d device, method, path string, body []byte, o reqOpts) resu
 	if raw, err := base64.RawURLEncoding.DecodeString(o.nonce); err != nil || len(raw) != 16 {
 		respNonce = ""
 	}
-	return e.send(req, respNonce)
+	return req, respNonce
+}
+
+// bindingOf computes the request binding of §4.5 from the request as the client sent it: the
+// SHA-256 of the 7-line canonical string over the raw header values (missing = empty).
+func bindingOf(req *http.Request) string {
+	canonical := strings.Join([]string{"ZETRU1", req.Method, req.URL.RequestURI(), req.Header.Get("Zetru-Device"),
+		req.Header.Get("Zetru-Timestamp"), req.Header.Get("Zetru-Nonce"), req.Header.Get("Zetru-Content-SHA256")}, "\n")
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+// responseVerifies checks a response signature over the 5-line message of §4.5.
+func (e *testEnv) responseVerifies(nonce, binding string, status int, body []byte, signature string) bool {
+	sig, _ := base64.StdEncoding.DecodeString(signature)
+	sum := sha256.Sum256(body)
+	msg := "ZETRU1-RESP\n" + nonce + "\n" + strconv.Itoa(status) + "\n" + hex.EncodeToString(sum[:]) + "\n" + binding
+	return ed25519.Verify(e.sid, []byte(msg), sig)
 }
 
 func (e *testEnv) send(req *http.Request, nonce string) result {
 	e.t.Helper()
+	binding := bindingOf(req)
 	resp, err := e.client.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	sig, _ := base64.StdEncoding.DecodeString(resp.Header.Get("Zetru-Signature"))
-	sum := sha256.Sum256(body)
-	msg := "ZETRU1-RESP\n" + nonce + "\n" + strconv.Itoa(resp.StatusCode) + "\n" + hex.EncodeToString(sum[:])
-	if !ed25519.Verify(e.sid, []byte(msg), sig) {
+	if !e.responseVerifies(nonce, binding, resp.StatusCode, body, resp.Header.Get("Zetru-Signature")) {
 		e.t.Fatalf("%s %s: response signature invalid (status %d)", req.Method, req.URL.Path, resp.StatusCode)
 	}
 	if len(body) > MaxResponseBytes {
@@ -540,15 +585,21 @@ func TestEnrollment(t *testing.T) {
 	e.advance(2 * time.Minute)
 	expect(t, "expired token", e.enrollRaw(with("token", short), ""), 410, "token_expired")
 
-	// 5 attempts per minute per source address.
+	// Unknown tokens: 5 attempts per minute per source address (GO-13).
 	e.advance(time.Minute)
 	for i := 0; i < 5; i++ {
-		e.enrollRaw(with("token", "AAAAAAAAAAAAAAAAAAAAAA"), "")
+		expect(t, "unknown token within the limit", e.enrollRaw(with("token", "AAAAAAAAAAAAAAAAAAAAAA"), ""), 403, "forbidden")
 	}
-	r = e.enrollRaw(good, "")
+	r = e.enrollRaw(with("token", "AAAAAAAAAAAAAAAAAAAAAA"), "")
 	expect(t, "enroll rate limit", r, 429, "rate_limited")
 	if r.header.Get("Retry-After") == "" {
 		t.Fatal("Retry-After missing")
+	}
+	// A token the operator issued is never rate-limited, so guessing cannot block pairing.
+	expect(t, "used token while limited", e.enrollRaw(good, ""), 409, "token_used")
+	fresh, _, _ := e.reg.CreateEnrolmentToken(e.tenant.ID, registry.TokenTTL)
+	if r := e.enrollRaw(with("token", fresh), ""); r.status != 200 {
+		t.Fatalf("valid token blocked by the unknown-token limit: %d %s", r.status, r.body)
 	}
 }
 
@@ -599,7 +650,17 @@ func TestRequestVerification(t *testing.T) {
 	expect(t, "replay", e.analyze(d, testMail, reqOpts{nonce: nonce}), 401, "replayed_nonce")
 	// Timestamps outside ±120 s.
 	expect(t, "stale", e.analyze(d, testMail, reqOpts{timestamp: e.now().Unix() - 121}), 401, "stale_timestamp")
-	expect(t, "future", e.analyze(d, testMail, reqOpts{timestamp: e.now().Unix() + 121}), 401, "stale_timestamp")
+	stale := e.analyze(d, testMail, reqOpts{timestamp: e.now().Unix() + 121})
+	expect(t, "future", stale, 401, "stale_timestamp")
+	// The server clock travels in the signed body, not only in the unsigned Date header (§11.6).
+	var staleBody struct {
+		Error struct {
+			ServerTime int64 `json:"server_time"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stale.body, &staleBody); err != nil || staleBody.Error.ServerTime != e.now().Unix() {
+		t.Fatalf("stale_timestamp without the server time: %s", stale.body)
+	}
 	// Signature by another key; the nonce of a failed request is released, so the genuine request
 	// with the same nonce still succeeds afterwards.
 	other, _ := newKey(t)

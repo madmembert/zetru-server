@@ -138,6 +138,15 @@ type Profile struct {
 	Workers, Queue    int   // analyzer concurrency and queue (the gateway admits Workers+Queue)
 	BodyBudget        int64 // bytes of analyze request bodies held in memory at once
 	MaxMailBytes      int   // default maximum mail size
+
+	// Campaign store caps (DECISIONS.md "Memory"): keyed bands of all scopes together, and mail
+	// references plus reports of all tenants together. Sized so that the store, its streamed save
+	// and the body budget fit the container's memory limit.
+	CampaignMaxBands int
+	CampaignMaxRefs  int
+
+	// Public listener: open connections in total and per client address (IPv6: per /64).
+	MaxConns, MaxConnsPerAddr int
 }
 
 // ProfileFor returns the defaults of the "pi" or "vps" profile.
@@ -145,10 +154,12 @@ func ProfileFor(name string) (Profile, error) {
 	switch name {
 	case "", "pi":
 		return Profile{Name: "pi", AnalyzePerMinute: 30, DailyQuota: 3000, URLCheckPerMinute: 60, OtherPerMinute: 30,
-			ReportsPerDay: 50, Workers: 2, Queue: 8, BodyBudget: 96 << 20, MaxMailBytes: 20 << 20}, nil
+			ReportsPerDay: 50, Workers: 2, Queue: 8, BodyBudget: 96 << 20, MaxMailBytes: 20 << 20,
+			CampaignMaxBands: 40_000, CampaignMaxRefs: 40_000, MaxConns: 256, MaxConnsPerAddr: 64}, nil
 	case "vps":
 		return Profile{Name: "vps", AnalyzePerMinute: 60, DailyQuota: 10000, URLCheckPerMinute: 60, OtherPerMinute: 30,
-			ReportsPerDay: 50, Workers: 4, Queue: 32, BodyBudget: 200 << 20, MaxMailBytes: 20 << 20}, nil
+			ReportsPerDay: 50, Workers: 4, Queue: 32, BodyBudget: 200 << 20, MaxMailBytes: 20 << 20,
+			CampaignMaxBands: 120_000, CampaignMaxRefs: 120_000, MaxConns: 1024, MaxConnsPerAddr: 128}, nil
 	}
 	return Profile{}, fmt.Errorf("unknown profile %q (pi or vps)", name)
 }

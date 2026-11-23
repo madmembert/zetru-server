@@ -12,7 +12,6 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
-	"unicode"
 
 	"zetru.app/gateway/internal/config"
 	"zetru.app/gateway/internal/keys"
@@ -127,15 +126,10 @@ func printPairing(dir string, reg *registry.Registry, t registry.Tenant, qrMode 
 	return nil
 }
 
-// clean removes control characters before printing operator-supplied or device-supplied text.
-func clean(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s)
-}
+// clean removes control, bidi, zero-width, separator and private-use characters before printing
+// operator-supplied or device-supplied text, so one row cannot be made to look like another
+// (GO-18).
+func clean(s string) string { return registry.CleanLabel(s) }
 
 func cmdDevices(args []string) error {
 	fs := flag.NewFlagSet("devices", flag.ContinueOnError)

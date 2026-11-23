@@ -1,5 +1,5 @@
 # Zetru rule tier, English (concept §9.4). Same conventions as de.yaml.
-version: rules-1.0.0
+version: rules-1.1.0
 language: en
 
 cta:
@@ -69,7 +69,7 @@ questions:
         - '\b(?:buy|purchase|get)\b.{0,30}\b(?:gift ?cards?|vouchers?|itunes|google play|steam)\b'
       instrument:
         - '(?:\$|£|€|usd|gbp|eur)\s?\d'
-        - '\d+(?:[.,]\d{2})?\s?(?:usd|gbp|eur|dollars?|pounds?|euros?)\b'
+        - '(?<!\d)\d{1,9}(?:[.,]\d{2})?\s?(?:usd|gbp|eur|dollars?|pounds?|euros?)\b'
         - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}|\bsort code\b|\brouting number\b|\baccount number\b'
         - '\bgift ?cards?\b|\bvouchers?\b|\bitunes\b|\bgoogle play\b|\bsteam (?:card|wallet)\b|\bpaysafecard\b'
         - '\bbitcoin\w*|\bbtc\b|\bcrypto\w*|\bwallet\b|\busdt\b'
@@ -172,7 +172,7 @@ questions:
         - '\b(?:has|have) been (?:charged|debited|renewed)\b|\bauto-?renew\w*|\brenewal\b|\bsubscription\b'
         - '\bcharged\b|\bdeducted\b|\b24/7\b|\bfree of charge\b'
     suppress:
-      - '\bif you have (?:any )?questions\b|\bfor (?:any )?(?:questions|queries|enquiries)\b|\bquestions\?|\bfeel free to\b'
+      - '(?:\bif you have (?:any )?questions\b|\bfor (?:any )?(?:questions|queries|enquiries)\b|\bquestions\?|\bfeel free to\b)[^.!?;]{0,80}'
 
   asks_code_or_command:
     groups:

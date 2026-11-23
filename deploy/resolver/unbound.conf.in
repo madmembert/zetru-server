@@ -1,6 +1,7 @@
 # Unbound configuration for the Zetru resolver (concept §3.2, docs/server-internal-api.md).
 # Recursive, DNSSEC-validating, QNAME minimisation, no forwarders. Only the analyzer, on the
-# internal "dns" network (@DNS_SUBNET@), may query it. Rendered by entrypoint.sh at start.
+# internal "dns" network (@DNS_SUBNET@), may query it. Rendered by entrypoint.sh at start, which
+# also refreshes the root trust anchor. Rebuild the image at least yearly all the same (README).
 
 server:
     # --- process ---
@@ -46,14 +47,30 @@ server:
     hide-identity: yes
     hide-version: yes
     hide-trustanchor: yes
-    # DNS rebinding protection: answers may not point into private ranges.
+    # DNS rebinding protection: answers may not point into private, loopback, unspecified or
+    # other non-public ranges (GO-19).
+    private-address: 0.0.0.0/8
     private-address: 10.0.0.0/8
-    private-address: 172.16.0.0/12
-    private-address: 192.168.0.0/16
-    private-address: 169.254.0.0/16
     private-address: 100.64.0.0/10
-    private-address: fd00::/8
+    private-address: 127.0.0.0/8
+    private-address: 169.254.0.0/16
+    private-address: 172.16.0.0/12
+    private-address: 192.0.0.0/24
+    private-address: 192.168.0.0/16
+    private-address: 198.18.0.0/15
+    private-address: ::/128
+    private-address: ::1/128
+    private-address: ::ffff:0:0/96
+    private-address: 64:ff9b::/96
+    private-address: fc00::/7
     private-address: fe80::/10
+
+    # --- rate limits (GO-19) ---
+    # Bound the DNS channel a compromised analyzer has through the resolver (§3.2): queries per
+    # second from one client (the analyzer; vps peak: 4 workers x 25 queries per mail) and
+    # towards the name servers of one zone.
+    ip-ratelimit: 100
+    ratelimit: 20
 
     # --- resources (192 MB container) ---
     msg-cache-size: 16m

@@ -30,7 +30,7 @@ class ChannelBroker:
         if decide is not None:
             message["decide"] = decide
         ipc.send_frame(self.sock, message)
-        reply, _ = ipc.recv_frame(self.sock, ipc.MAX_FROM_WORKER)
+        reply, _ = ipc.recv_frame(self.sock, ipc.MAX_RESP)
         if reply.get("t") != "resp":
             raise ipc.ProtocolError("unexpected reply")
         return reply

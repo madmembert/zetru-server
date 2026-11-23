@@ -131,13 +131,13 @@ def test_optional_backends_off_by_default_and_licence_gate(tmp_path):
     enc = EncoderBackend(str(tmp_path))
     assert not enc.enabled() and enc.error == "no_model"
     assert all(a.abstain == "backend_error" for a in enc.answer(LEGIT, QUESTIONS, None).values())
-    assert not openjev_from_env({"ZETRU_OPENJEV_URL": "http://gpu:9000"}).enabled()
-    on = openjev_from_env({"ZETRU_OPENJEV_URL": "http://gpu:9000", "ZETRU_ALLOW_NONCOMMERCIAL": "1"})
+    assert not openjev_from_env({"ZETRU_OPENJEV_URL": "https://gpu:9000"}).enabled()
+    on = openjev_from_env({"ZETRU_OPENJEV_URL": "https://gpu:9000", "ZETRU_ALLOW_NONCOMMERCIAL": "1"})
     assert on.enabled() and "CC BY-NC 4.0" in on.licence_notice
     assert not jev_from_env({"ZETRU_JEV_URL": "https://jev.example"}).enabled()
     assert not LLMBackend(None, None).enabled()
     health = {h["id"]: h for h in Router.from_env({"ZETRU_ALLOW_NONCOMMERCIAL": "1",
-                                                   "ZETRU_OPENJEV_URL": "http://gpu:9000"}).health()}
+                                                   "ZETRU_OPENJEV_URL": "https://gpu:9000"}).health()}
     assert health["rules"]["enabled"] and not health["openjev"]["enabled"]   # not configured in ZETRU_INFERENCE_BACKENDS
 
 
@@ -198,6 +198,9 @@ def _call(handler_cls, method, path, body=b""):
 
         def sendall(self, data):
             self.out.write(data)
+
+        def settimeout(self, value):
+            self.timeout = value
 
     sock = Sock()
 

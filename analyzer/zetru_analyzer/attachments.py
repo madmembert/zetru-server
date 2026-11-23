@@ -2,15 +2,23 @@
 
 - magic-byte detection and type/extension mismatch
 - ZIP central-directory listing (limits: 1,000 entries, 2 nesting levels, 200 MB declared size); nested
-  archives are decompressed in memory only when small, bounded by their declared size
+  archives are decompressed in memory only when small, bounded by their declared size. The end record is the
+  one whose comment reaches the end of the data; local headers that no central-directory entry accounts for
+  make the archive opaque (PY-10). Content with an archive extension or a ZIP end record is scanned as a ZIP.
 - TAR and GZIP(+TAR) listing, other archive formats are opaque
-- OOXML macro detection (vbaProject.bin), OLE2 directory (macro storages, encryption, MSI)
+- OOXML macro detection ([Content_Types].xml macro/VBA content types, vbaProject parts, macro-enabled
+  extensions; PY-15), OLE2 directory (macro storages, encryption, MSI)
 - PDF token scan (/JavaScript, /JS, /Launch, /EmbeddedFile, /OpenAction, /Encrypt) incl. Flate streams
 - HTML/SVG active content (script, forms, event handlers, external URLs, encoded blobs > 10 KB)
+
+Every parser here runs in linear time with explicit work limits (PY-05). A sub-analysis that fails or hits a
+work limit marks the report `partial`; one that raises an unexpected error marks it `failed` as well. Signals
+found before the failure are kept (PY-09).
 """
 
 from __future__ import annotations
 
+import bisect
 import re
 import struct
 import unicodedata
@@ -25,9 +33,14 @@ MAX_NESTING = 2
 MAX_DECLARED = 200 * 1024 * 1024
 MAX_NESTED_INFLATE = 20 * 1024 * 1024
 MAX_TAR_STREAM = 64 * 1024 * 1024
-MAX_PDF_STREAMS = 300
-MAX_PDF_INFLATE = 16 * 1024 * 1024
+MAX_PDF_STREAMS = 2000
+MAX_PDF_INFLATE = 16 * 1024 * 1024        # inflated bytes per PDF
+MAX_PDF_INFLATE_INPUT = 64 * 1024 * 1024  # compressed bytes fed to zlib per PDF (overlapping streams count again)
 MAX_SCAN_BYTES = 8 * 1024 * 1024
+MAX_TAR_HEADERS = 4 * 1000                # every header counts, including pax and GNU long-name headers
+MAX_TAR_LONG_NAME = 64 * 1024
+MAX_OLE_STREAM_READS = 16
+MAX_LOCAL_HEADERS = 4 * 1000
 BLOB_MIN_BASE64 = 13654   # characters of base64 that decode to more than 10 KB
 BLOB_MIN_HEX = 20480
 _BASE64_RUN = re.compile(rb"[A-Za-z0-9+/]+")   # each run is matched once: linear time on hostile input
@@ -74,6 +87,8 @@ class AttachmentReport:
     label: str                                   # class shown in the canonical state
     signals: dict[str, dict] = field(default_factory=dict)  # signal id → evidence (without part)
     nested_types: list[str] = field(default_factory=list)
+    partial: bool = False                        # a sub-analysis failed or hit a work limit
+    failed: bool = False                         # a sub-analysis raised an unexpected error
 
 
 # Magic ---------------------------------------------------------------------------------------------------
@@ -197,12 +212,27 @@ class ArchiveError(Exception):
     pass
 
 
+def find_eocd(data: bytes) -> int:
+    """Position of the end-of-central-directory record: the outermost record whose comment ends exactly at the
+    end of the data (a record inside that comment is comment text and cannot hide the real listing); without
+    one, the last record (tolerates trailing bytes). A fake outer record with an empty listing is caught by
+    `unlisted_local_headers`."""
+    search_from = max(0, len(data) - 65557)
+    candidates = []
+    pos = data.rfind(b"PK\x05\x06", search_from)
+    while pos >= 0:
+        if pos + 22 <= len(data):
+            candidates.append(pos)
+        pos = data.rfind(b"PK\x05\x06", search_from, pos)
+    if not candidates:
+        raise ArchiveError("no_eocd")
+    exact = [c for c in candidates if c + 22 + struct.unpack_from("<H", data, c + 20)[0] == len(data)]
+    return min(exact) if exact else candidates[0]
+
+
 def zip_entries(data: bytes) -> list[ZipEntry]:
     """Central-directory listing. Raises ArchiveError when the listing is impossible or exceeds limits."""
-    search_from = max(0, len(data) - 65557)
-    eocd = data.rfind(b"PK\x05\x06", search_from)
-    if eocd < 0 or eocd + 22 > len(data):
-        raise ArchiveError("no_eocd")
+    eocd = find_eocd(data)
     (_sig, _disk, _cd_disk, _n_disk, n_total, cd_size, cd_offset, _clen) = struct.unpack_from("<IHHHHIIH", data, eocd)
     if n_total == 0xFFFF or cd_size == 0xFFFFFFFF or cd_offset == 0xFFFFFFFF:
         loc = eocd - 20
@@ -241,6 +271,35 @@ def zip_entries(data: bytes) -> list[ZipEntry]:
             raise ArchiveError("limits")
         pos += 46 + nlen + elen + clen
     return entries
+
+
+def unlisted_local_headers(data: bytes, entries: list[ZipEntry]) -> bool:
+    """True when a local file header lies outside the byte ranges of all listed entries (members that readers
+    walking local headers extract but the central directory hides)."""
+    ranges = []
+    for entry in entries:
+        start = entry.offset
+        if start + 30 <= len(data) and data[start:start + 4] == b"PK\x03\x04":
+            nlen, elen = struct.unpack_from("<HH", data, start + 26)
+            ranges.append((start, start + 30 + nlen + elen + entry.comp_size))
+        else:
+            ranges.append((start, start + 30))
+    ranges.sort()
+    starts = [a for a, _ in ranges]
+    reach = []                       # reach[k]: furthest end among ranges[0..k]
+    for _, end in ranges:
+        reach.append(max(end, reach[-1]) if reach else end)
+    pos = data.find(b"PK\x03\x04")
+    seen = 0
+    while pos >= 0:
+        seen += 1
+        if seen > MAX_LOCAL_HEADERS:
+            raise ArchiveError("limits")
+        k = bisect.bisect_right(starts, pos) - 1
+        if k < 0 or reach[k] <= pos:
+            return True
+        pos = data.find(b"PK\x03\x04", pos + 4)
+    return False
 
 
 def _zip64_extra(extra: bytes, size: int, comp: int, offset: int) -> tuple[int, int, int]:
@@ -292,43 +351,58 @@ def zip_member(data: bytes, entry: ZipEntry) -> bytes:
 # TAR / GZIP ------------------------------------------------------------------------------------------------
 
 def _tar_names_from_stream(chunks) -> list[str]:
+    """Member names of a TAR stream. Reads with an offset into one buffer (re-slicing the buffer per header was
+    quadratic) and counts every header, pax and GNU long-name headers included, against MAX_TAR_HEADERS."""
     names: list[str] = []
-    buf = b""
+    buf = bytearray()
+    off = 0
     skip = 0
     pending_long: bytes | None = None
     reading_long = 0
-    long_buf = b""
     total = 0
+    headers = 0
     for chunk in chunks:
+        if off:
+            del buf[:off]
+            off = 0
         buf += chunk
         while True:
+            available = len(buf) - off
             if skip:
-                take = min(skip, len(buf))
-                buf = buf[take:]
+                take = min(skip, available)
+                off += take
                 skip -= take
                 if skip:
                     break
+                available = len(buf) - off
             if reading_long:
-                if len(buf) < reading_long:
+                if available < reading_long:
                     break
-                long_buf = buf[:reading_long]
-                pending_long = long_buf.split(b"\x00", 1)[0]
+                pending_long = bytes(buf[off:off + reading_long]).split(b"\x00", 1)[0]
                 padded = (reading_long + 511) // 512 * 512
-                buf = buf[reading_long:]
+                off += reading_long
                 skip = padded - reading_long
                 reading_long = 0
                 continue
-            if len(buf) < 512:
+            if available < 512:
                 break
-            header, buf = buf[:512], buf[512:]
+            header = bytes(buf[off:off + 512])
+            off += 512
             if header == b"\x00" * 512:
                 return names
+            headers += 1
+            if headers > MAX_TAR_HEADERS:
+                raise ArchiveError("limits")
             try:
                 size = int(header[124:136].split(b"\x00", 1)[0].strip() or b"0", 8)
             except ValueError:
                 raise ArchiveError("tar_header") from None
+            if size < 0:
+                raise ArchiveError("tar_header")
             typeflag = header[156:157]
             if typeflag in (b"L",):
+                if size > MAX_TAR_LONG_NAME:
+                    raise ArchiveError("tar_header")
                 reading_long = size
                 continue
             name = header[:100].split(b"\x00", 1)[0]
@@ -443,10 +517,12 @@ def ole2_info(data: bytes) -> OleInfo:
             continue
         fat.extend(struct.unpack_from(f"<{sector // 4}I", sector_data(s)))
 
-    def chain(start: int, table: list[int], limit: int) -> list[int]:
+    def chain(start: int, table: list[int], limit: int, take: int | None = None) -> list[int]:
         out = []
         cur = start
         while cur < 0xFFFFFFFA:
+            if take is not None and len(out) >= take:
+                break
             if cur >= len(table) or len(out) > limit:
                 raise ArchiveError("ole2_chain")
             out.append(cur)
@@ -478,20 +554,32 @@ def ole2_info(data: bytes) -> OleInfo:
         for s in chain(first_minifat, fat, max_sectors):
             minifat.extend(struct.unpack_from(f"<{sector // 4}I", sector_data(s)))
 
+    mini_cache: list[bytes] = []
+
+    def mini_stream() -> bytes:
+        if not mini_cache:   # built once: rebuilding it per entry was quadratic (PY-05)
+            mini_cache.append(b"".join(sector_data(s) for s in chain(root[3], fat, max_sectors)))
+        return mini_cache[0]
+
     def read_stream(entry, max_bytes: int) -> bytes:
         _, _, _, start, real_size = entry
         size = min(real_size, max_bytes)
         if real_size < mini_cutoff:  # placement depends on the stream's real size, not on how much we read
-            mini_stream = b"".join(sector_data(s) for s in chain(root[3], fat, max_sectors))
-            out = b"".join(mini_stream[m * 64:(m + 1) * 64] for m in chain(start, minifat, len(minifat)))
+            mini = mini_stream()
+            out = b"".join(mini[m * 64:(m + 1) * 64] for m in chain(start, minifat, len(minifat), size // 64 + 1))
         else:
-            out = b"".join(sector_data(s) for s in chain(start, fat, max_sectors)[: size // sector + 1])
+            out = b"".join(sector_data(s) for s in chain(start, fat, max_sectors, size // sector + 1))
         return out[:size]
 
     encrypted = "encryptioninfo" in lower and "encryptedpackage" in lower
     encrypted = encrypted or "encryptedsummary" in lower
+    reads = 0
     for entry in entries:
         lname = entry[0].lower()
+        if lname in ("worddocument", "workbook", "book") and entry[1] == 2:
+            reads += 1
+            if reads > MAX_OLE_STREAM_READS:
+                break
         try:
             if lname == "worddocument" and entry[1] == 2:
                 fib = read_stream(entry, 64)
@@ -521,43 +609,75 @@ def _biff_filepass(stream: bytes) -> bool:
 
 # PDF ------------------------------------------------------------------------------------------------------
 
-_PDF_NAME = re.compile(rb"/([^\s/\[\]()<>{}%]{1,127})")
 _PDF_STREAM = re.compile(rb"(?<!end)stream\r?\n")
+_PDF_DELIMITER = re.compile(rb"[\s/\[\]()<>{}%]")
+_PDF_ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
+PDF_ACTIVE_NAMES = ("JavaScript", "JS", "Launch", "EmbeddedFile", "EmbeddedFiles", "RichMedia")
+PDF_NAMES = PDF_ACTIVE_NAMES + ("Encrypt", "OpenAction")
+_PDF_LITERAL = {n: re.compile(b"/" + n.encode() + rb"(?![^\s/\[\]()<>{}%])") for n in PDF_NAMES}
+MAX_PDF_ESCAPES = 20_000   # "#xx" escapes examined per scanned buffer
+MAX_PDF_NAME = 127
 
 
-def _pdf_names(data: bytes) -> set[str]:
-    names = set()
-    for m in _PDF_NAME.finditer(data):
-        raw = m.group(1)
-        if b"#" in raw:
-            raw = re.sub(rb"#([0-9A-Fa-f]{2})", lambda x: bytes([int(x.group(1), 16)]), raw)
-        names.add(raw.decode("latin-1"))
-    return names
+def pdf_names_in(data, found: set[str]) -> bool:
+    """Adds the names of interest that occur in `data` to `found`; returns False when the escape budget was
+    exhausted (the scan is then incomplete). Literal names are found with one literal-prefix regex search each;
+    names written with #xx escapes are reconstructed only around the escapes. The former approach (a Python loop
+    over every name token) took seconds for 16 MB of "/A" (PY-05)."""
+    for name in PDF_NAMES:
+        if name not in found and _PDF_LITERAL[name].search(data):
+            found.add(name)
+    if len(found) == len(PDF_NAMES) or b"#" not in data:
+        return True
+    if data.count(b"#") > MAX_PDF_ESCAPES:
+        return False
+    last_slash = -1
+    for m in _PDF_ESCAPE.finditer(data):
+        slash = data.rfind(b"/", max(0, m.start() - MAX_PDF_NAME), m.start())
+        if slash < 0 or slash == last_slash or _PDF_DELIMITER.search(data, slash + 1, m.start()):
+            continue
+        last_slash = slash
+        end = _PDF_DELIMITER.search(data, m.end(), slash + 1 + MAX_PDF_NAME)
+        token = bytes(data[slash + 1:end.start() if end else min(len(data), slash + 1 + MAX_PDF_NAME)])
+        name = _PDF_ESCAPE.sub(lambda x: bytes([int(x.group(1), 16)]), token).decode("latin-1")
+        if name in PDF_NAMES:
+            found.add(name)
+    return True
 
 
 def pdf_scan(data: bytes) -> dict:
+    """Name tokens in the file and in Flate streams. `partial`: a work limit stopped the stream scan."""
     data = data[:MAX_SCAN_BYTES * 4]
-    names = _pdf_names(data)
-    inflated = 0
+    view = memoryview(data)
+    found: set[str] = set()
+    partial = not pdf_names_in(data, found)
+    inflated = fed = 0
+    stream_end = -1
     for count, m in enumerate(_PDF_STREAM.finditer(data)):
-        if count >= MAX_PDF_STREAMS or inflated >= MAX_PDF_INFLATE:
+        if len(found) == len(PDF_NAMES):
+            break
+        if count >= MAX_PDF_STREAMS or inflated >= MAX_PDF_INFLATE or fed >= MAX_PDF_INFLATE_INPUT:
+            partial = True
             break
         dict_start = data.rfind(b"<<", max(0, m.start() - 4096), m.start())
         if dict_start < 0 or b"Flate" not in data[dict_start:m.start()]:
             continue
         start = m.end()
-        end = data.find(b"endstream", start)
-        if end < 0:
-            break
+        if stream_end < start:   # the next "endstream" is shared by every stream keyword before it
+            stream_end = data.find(b"endstream", start)
+            if stream_end < 0:
+                break
+        fed += stream_end - start
         try:
-            out = zlib.decompressobj().decompress(data[start:end], MAX_PDF_INFLATE - inflated)
+            out = zlib.decompressobj().decompress(view[start:stream_end], MAX_PDF_INFLATE - inflated)
         except zlib.error:
             continue
         inflated += len(out)
-        names |= _pdf_names(out)
-    active = bool(names & {"JavaScript", "JS", "Launch", "EmbeddedFile", "EmbeddedFiles", "RichMedia"})
-    encrypt = "Encrypt" in names
-    return {"active": active, "encrypt": encrypt, "open_action": "OpenAction" in names}
+        if not pdf_names_in(out, found):
+            partial = True
+    active = bool(found & set(PDF_ACTIVE_NAMES))
+    return {"active": active, "encrypt": "Encrypt" in found, "open_action": "OpenAction" in found,
+            "partial": partial}
 
 
 # HTML / SVG ------------------------------------------------------------------------------------------------
@@ -571,13 +691,29 @@ _ACTIVE_PATTERNS = [
     re.compile(rb"\b(?:href|src|action|formaction|data|poster|background)\s*=\s*[\"']?\s*(?:https?:)?//", re.I),
     re.compile(rb"url\(\s*[\"']?\s*(?:https?:)?//", re.I),
     re.compile(rb"http-equiv\s*=\s*[\"']?refresh", re.I),
-    re.compile(rb"<\s*input\b[^>]*type\s*=\s*[\"']?password", re.I),
 ]
+_INPUT_OPEN = re.compile(rb"<\s*input\b", re.I)
+_PASSWORD_TYPE = re.compile(rb"type\s*=\s*[\"']?password", re.I)
+
+
+def password_input(sample: bytes) -> bool:
+    """`<input … type=password` within one tag. Same matches as the regex <\\s*input\\b[^>]*type… but linear:
+    a tag region that ends at the same ">" as one already searched is a suffix of it and is skipped (PY-05)."""
+    searched_until = -1
+    for m in _INPUT_OPEN.finditer(sample):
+        if m.end() < searched_until:
+            continue
+        gt = sample.find(b">", m.end())
+        end = len(sample) if gt < 0 else gt
+        if _PASSWORD_TYPE.search(sample, m.end(), end):
+            return True
+        searched_until = end
+    return False
 
 
 def html_active(data: bytes) -> bool:
     sample = data[:MAX_SCAN_BYTES]
-    if any(p.search(sample) for p in _ACTIVE_PATTERNS):
+    if any(p.search(sample) for p in _ACTIVE_PATTERNS) or password_input(sample):
         return True
     return has_blob(sample)
 
@@ -616,7 +752,10 @@ class _ArchiveScan:
             return
         try:
             if kind == "zip":
-                for entry in zip_entries(data):
+                entries = zip_entries(data)
+                if unlisted_local_headers(data, entries):
+                    self.opaque = True
+                for entry in entries:
                     if entry.name.endswith("/"):
                         continue
                     self.check_name(entry.name)
@@ -655,92 +794,162 @@ class _ArchiveScan:
             self.opaque = True
 
 
+_MACRO_CONTENT_TYPES = (b"macroenabled", b"vbaproject", b"macrosheet")
+MAX_CONTENT_TYPES_XML = 1024 * 1024
+
+
+def looks_like_zip(data: bytes) -> bool:
+    """A ZIP end record near the end of the data (archives with bytes prepended, PY-10)."""
+    return data.find(b"PK\x05\x06", max(0, len(data) - 65557)) >= 0
+
+
+def _ooxml_macros(data: bytes, entries: list[ZipEntry], ext: str, packs: Packs) -> bool:
+    lower = [e.name.lower() for e in entries]
+    if any(n.endswith("vbaproject.bin") or n.startswith("xl/macrosheets/") for n in lower):
+        return True
+    if ext in packs.ext_macro:      # a macro-enabled format by name (docm, xlsm, …)
+        return True
+    types = next((e for e in entries if e.name.lower() == "[content_types].xml"), None)
+    if types is None or types.size > MAX_CONTENT_TYPES_XML:
+        return False
+    try:
+        xml = zip_member(data, types).lower()
+    except ArchiveError:
+        return False
+    return any(marker in xml for marker in _MACRO_CONTENT_TYPES)
+
+
 def inspect(path: str, filename: str | None, declared_type: str, data: bytes, packs: Packs) -> AttachmentReport:
     real = sniff(data)
     ext = extension(filename)
-    label = real
-    report = AttachmentReport(path=path, real_type=real, label=label)
+    report = AttachmentReport(path=path, real_type=real, label=real)
     sig = report.signals
+    state = {"label": real, "real": real}
 
-    if real in EXEC_TYPES:
-        sig["ATT_EXECUTABLE"] = {}
-        label = "executable"
-    if real == "zip":
+    def step(fn) -> None:
+        """Runs one sub-analysis; a failure keeps what the others found (PY-09)."""
         try:
-            names = [e.name for e in zip_entries(data)]
-            lower = [n.lower() for n in names]
-            if "[content_types].xml" in lower:
-                real = report.real_type = "ooxml"
-                label = "office"
-                if any(n.endswith("vbaproject.bin") or n.startswith("xl/macrosheets/") for n in lower):
-                    sig["ATT_MACRO"] = {}
-                    label = "office-macro"
+            fn()
+        except (ArchiveError, struct.error, IndexError, ValueError, zlib.error):
+            report.partial = True
+        except Exception:  # noqa: BLE001 - an unexpected error must not discard the other findings
+            report.partial = report.failed = True
+
+    def executable() -> None:
+        if state["real"] in EXEC_TYPES:
+            sig["ATT_EXECUTABLE"] = {}
+            state["label"] = "executable"
+
+    def zip_by_end_record() -> None:
+        # Unrecognised content with an archive extension or a ZIP end record: list it as a ZIP if possible.
+        if state["real"] in ("unknown", "text") and (_archive_type_from_name(filename or "") or looks_like_zip(data)):
+            try:
+                zip_entries(data)
+                state["real"] = report.real_type = "zip"
+            except (ArchiveError, struct.error):
+                if _archive_type_from_name(filename or ""):
+                    sig["ATT_ARCHIVE_OPAQUE"] = {}
+                    state["label"] = "archive"
+
+    def ooxml() -> None:
+        if state["real"] != "zip":
+            return
+        try:
+            entries = zip_entries(data)
         except (ArchiveError, struct.error):
-            pass
-    if real == "ole2":
-        label = "office"
+            return
+        if "[content_types].xml" in (e.name.lower() for e in entries):
+            state["real"] = report.real_type = "ooxml"
+            state["label"] = "office"
+            if _ooxml_macros(data, entries, ext, packs):
+                sig["ATT_MACRO"] = {}
+                state["label"] = "office-macro"
+
+    def ole2() -> None:
+        if state["real"] != "ole2":
+            return
+        state["label"] = "office"
         try:
             info = ole2_info(data)
-            if info.root_clsid == MSI_CLSID:
-                real = report.real_type = "msi"
-                sig["ATT_EXECUTABLE"] = {}
-                label = "executable"
-            if info.macros:
-                sig["ATT_MACRO"] = {}
-                label = "office-macro"
-            if info.encrypted:
-                sig["ATT_ENCRYPTED"] = {}
-                label = "office-encrypted"
         except (ArchiveError, struct.error, IndexError, ValueError):
-            pass
-    if real in ARCHIVE_TYPES:
-        scan = _ArchiveScan(packs)
-        scan.scan(data, real, 1, filename)
-        label = real
-        if scan.risky:
-            sig["ATT_ARCHIVE_RISKY"] = {"count": scan.risky}
-            label = f"{real}(executable)"
-        if scan.encrypted:
+            return
+        if info.root_clsid == MSI_CLSID:
+            state["real"] = report.real_type = "msi"
+            sig["ATT_EXECUTABLE"] = {}
+            state["label"] = "executable"
+        if info.macros:
+            sig["ATT_MACRO"] = {}
+            state["label"] = "office-macro"
+        if info.encrypted:
             sig["ATT_ENCRYPTED"] = {}
-            label = f"{real}(encrypted)"
-        if scan.opaque and not scan.risky:
-            sig["ATT_ARCHIVE_OPAQUE"] = {}
-        report.nested_types = [extension(n) for n in scan.names[:20]]
-    if real == "pdf":
-        label = "pdf"
+            state["label"] = "office-encrypted"
+
+    def archive() -> None:
+        real = state["real"]
+        if real not in ARCHIVE_TYPES:
+            return
+        scan = _ArchiveScan(packs)
+        try:
+            scan.scan(data, real, 1, filename)
+        finally:
+            state["label"] = real
+            if scan.risky:
+                sig["ATT_ARCHIVE_RISKY"] = {"count": scan.risky}
+                state["label"] = f"{real}(executable)"
+            if scan.encrypted:
+                sig["ATT_ENCRYPTED"] = {}
+                state["label"] = f"{real}(encrypted)"
+            if scan.opaque and not scan.risky:
+                sig["ATT_ARCHIVE_OPAQUE"] = {}
+            report.nested_types = [extension(n) for n in scan.names[:20]]
+
+    def pdf() -> None:
+        if state["real"] != "pdf":
+            return
+        state["label"] = "pdf"
         result = pdf_scan(data)
+        if result["partial"]:
+            report.partial = True
         if result["active"]:
             sig["ATT_PDF_ACTIVE"] = {}
-            label = "pdf-active"
+            state["label"] = "pdf-active"
         if result["encrypt"]:
             opens = pdfcrypt.opens_without_password(data)
             if opens is False:
                 sig["ATT_ENCRYPTED"] = {}
-                label = "pdf-encrypted"
-    if real in ("html", "svg") or ext in packs.ext_html:
-        if real in ("html", "svg", "xml", "text", "unknown"):
-            label = "svg" if real == "svg" or ext in ("svg", "svgz") else "html"
-            if html_active(data):
-                sig["ATT_HTML_SVG_ACTIVE"] = {}
-    if real in IMAGE_TYPES:
-        label = "image"
+                state["label"] = "pdf-encrypted"
 
-    # Type mismatch: confidently detected content that the extension or declared type cannot have.
-    mismatch = False
-    if ext and ext in _ALLOWED and real not in ("unknown", "text"):
-        mismatch = real not in _ALLOWED[ext]
-    elif ext and real in EXEC_TYPES and ext not in packs.ext_executable:
-        mismatch = True
-    declared = _DECLARED_STRICT.get(declared_type)
-    if declared and real in EXEC_TYPES | {"html", "svg"} and declared not in ("text",):
-        mismatch = True
-    if declared == "text" and real in EXEC_TYPES:
-        mismatch = True
-    if double_extension(filename, packs):
-        mismatch = True
-    if mismatch:
-        sig["ATT_TYPE_MISMATCH"] = {}
-    report.label = label
+    def html() -> None:
+        real = state["real"]
+        if real in ("html", "svg") or ext in packs.ext_html:
+            if real in ("html", "svg", "xml", "text", "unknown"):
+                state["label"] = "svg" if real == "svg" or ext in ("svg", "svgz") else "html"
+                if html_active(data):
+                    sig["ATT_HTML_SVG_ACTIVE"] = {}
+        if real in IMAGE_TYPES:
+            state["label"] = "image"
+
+    def mismatch() -> None:
+        # Type mismatch: confidently detected content that the extension or declared type cannot have.
+        real = state["real"]
+        found = False
+        if ext and ext in _ALLOWED and real not in ("unknown", "text"):
+            found = real not in _ALLOWED[ext]
+        elif ext and real in EXEC_TYPES and ext not in packs.ext_executable:
+            found = True
+        declared = _DECLARED_STRICT.get(declared_type)
+        if declared and real in EXEC_TYPES | {"html", "svg"} and declared not in ("text",):
+            found = True
+        if declared == "text" and real in EXEC_TYPES:
+            found = True
+        if double_extension(filename, packs):
+            found = True
+        if found:
+            sig["ATT_TYPE_MISMATCH"] = {}
+
+    for fn in (executable, zip_by_end_record, ooxml, ole2, archive, pdf, html, mismatch):
+        step(fn)
+    report.label = state["label"]
     return report
 
 

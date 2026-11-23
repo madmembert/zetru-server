@@ -1,4 +1,4 @@
-# Test-only dependencies (never installed in images). Licences in server/THIRD_PARTY_PYTHON.md.
+# Test-only dependencies (never installed in images). Licences in THIRD_PARTY_PYTHON.md.
 -r analyzer/requirements.txt
 -r inference/requirements.txt
 pytest==9.2.0

@@ -1,6 +1,10 @@
 """HTTP server: POST /v1/systemone, GET /healthz (internal `core` network only, server-internal-api.md).
 
 Logs carry only the endpoint, status and a duration bucket; never state text, questions or answers.
+
+Load bounds (security review PY-04): at most `ZETRU_INFERENCE_CONCURRENCY` requests (default 8) are handled at
+once; further connections get `503 busy` at once instead of a new thread. Each connection has a 15 s socket
+timeout, and the router answers within its 6 s deadline, so no request can hold a thread for long.
 """
 
 from __future__ import annotations
@@ -9,26 +13,32 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import SERVICE_VERSION
 from .router import Router
 
-MAX_BODY = 256 * 1024
+MAX_BODY = 1024 * 1024   # a 64 Ki-character state, JSON-escaped at up to 12 bytes per character, plus questions
 MAX_STATE = 64 * 1024
+DEFAULT_CONCURRENCY = 8
+SOCKET_TIMEOUT_S = 15.0
 MAX_QUESTIONS = 32
-_QID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_QID = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _TYPES = ("choice", "noul", "score")
 _BACKENDS = ("rules", "encoder", "llm", "openjev", "jev")
 _ERRORS = {"bad_request": "Malformed request.", "not_found": "Not found.", "internal": "Internal error.",
-           "too_large": "Request too large."}
+           "too_large": "Request too large.", "busy": "The inference service is busy. Retry later."}
 
 
 def log(event: str, **fields) -> None:
     record = {"ts": int(time.time()), "svc": "inference", "event": event}
     record.update({k: v for k, v in fields.items() if k in ("status", "path", "duration_bucket", "error_class", "backend")})
-    sys.stderr.write(json.dumps(record) + "\n")
+    try:
+        sys.stderr.write(json.dumps(record) + "\n")
+    except Exception:  # logging must never break request handling
+        pass
 
 
 def validate_request(doc) -> tuple[str, list[dict], str | None, list[str]]:
@@ -48,7 +58,7 @@ def validate_request(doc) -> tuple[str, list[dict], str | None, list[str]]:
     clean = []
     seen = set()
     for q in questions:
-        if not isinstance(q, dict) or not isinstance(q.get("id"), str) or not _QID.match(q["id"]) or q["id"] in seen:
+        if not isinstance(q, dict) or not isinstance(q.get("id"), str) or not _QID.fullmatch(q["id"]) or q["id"] in seen:
             raise ValueError("question")
         if q.get("type") not in _TYPES:
             raise ValueError("question_type")
@@ -72,6 +82,7 @@ def make_handler(router: Router):
         server_version = "zetru-inference"
         sys_version = ""
         protocol_version = "HTTP/1.1"
+        timeout = SOCKET_TIMEOUT_S   # an idle or slow client cannot keep a handler thread
 
         def log_message(self, fmt, *args):  # silence default access log (it would contain the client address)
             return
@@ -129,10 +140,52 @@ def make_handler(router: Router):
     return Handler
 
 
+_BUSY_BODY = json.dumps({"error": {"code": "busy", "message": _ERRORS["busy"]}}, separators=(",", ":")).encode()
+_BUSY = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\n"
+         b"Connection: close\r\nContent-Length: " + str(len(_BUSY_BODY)).encode() + b"\r\n\r\n" + _BUSY_BODY)
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a fixed number of handler threads; excess connections are refused with 503."""
+
+    daemon_threads = True
+
+    def __init__(self, address, handler, max_concurrent: int = DEFAULT_CONCURRENCY, bind_and_activate: bool = True):
+        self.slots = threading.BoundedSemaphore(max(1, max_concurrent))
+        super().__init__(address, handler, bind_and_activate)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            try:
+                request.settimeout(1.0)
+                request.sendall(_BUSY)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
+def _concurrency(env=os.environ) -> int:
+    try:
+        return max(1, min(64, int(env.get("ZETRU_INFERENCE_CONCURRENCY", DEFAULT_CONCURRENCY))))
+    except ValueError:
+        return DEFAULT_CONCURRENCY
+
+
 def serve(host: str = "0.0.0.0", port: int | None = None) -> None:
     port = port or int(os.environ.get("ZETRU_INFERENCE_PORT", "8082"))
     router = Router.from_env()
-    httpd = ThreadingHTTPServer((host, port), make_handler(router))
-    httpd.daemon_threads = True
+    httpd = BoundedThreadingHTTPServer((host, port), make_handler(router), _concurrency())
     log("listening", path=f":{port}")
     httpd.serve_forever()

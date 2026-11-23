@@ -3,6 +3,12 @@ per-mail budgets, validation of everything a worker returns, and response assemb
 
 The supervisor never parses mail content. It is a single-threaded asyncio program (no executor threads),
 so starting the zygote with exec is the only process creation it performs.
+
+Outcome mapping (security review PY-01, PY-05): whatever the mail makes a worker do — raise, exceed its CPU or
+wall-clock limit, crash, or return something invalid — the answer is `200` with `parse: failed`,
+`MIME_MALFORMED` and `MIME_LIMITS`. Only a sandbox failure (`503 analyzer_unavailable`) and the supervisor's own
+20 s deadline (`504 analysis_timeout`) are errors. A worker gets at most 4 broker round trips (PY-23); a broker
+reply never exceeds `ipc.MAX_RESP` (PY-06).
 """
 
 from __future__ import annotations
@@ -33,10 +39,20 @@ DNS_BUDGET = 25
 FEED_BUDGET = 40
 AGE_BUDGET = 6
 MAX_RESPONSE = 256 * 1024
-_NAME = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z0-9-]{1,63}$")
+MAX_REQ_FRAMES = 4              # the pipeline needs two broker round trips
+MAX_STATE = 64 * 1024
+MAX_TXT_RECORDS = 8             # per name; DKIM and DMARC records are short printable ASCII
+MAX_TXT_CHARS = 2048
+SPAWN_TIMEOUTS_DEAD = 2         # consecutive unanswered spawns after which the zygote counts as hung
+DNS_ERRORS_RERESOLVE = 3        # consecutive resolver timeouts after which its address is looked up again
+_NAME = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z0-9-]{1,63}")
 _STAGES = ("parse", "auth", "urls", "attachments", "domain_age", "feeds", "classifier")
 _STAGE_VALUES = ("ok", "partial", "failed", "skipped", "abstained")
-_BAND = re.compile(r"^[0-9a-f]{4}$")
+_BAND = re.compile(r"[0-9a-f]{4}")
+_QID = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_ABSTAIN = re.compile(r"[a-z_0-9]{1,40}")
+_SELECTOR = re.compile(r"[a-z0-9_.-]{1,63}")
+_TXT_DROP = bytes(range(0, 0x20)) + bytes(range(0x7F, 0x100))
 
 
 class AnalysisTimeout(Exception):
@@ -65,7 +81,7 @@ def allowed_dns_names(names: list[str]) -> list[str]:
     dmarc_targets = {n[len("_dmarc."):] for n in names if isinstance(n, str) and n.startswith("_dmarc.")}
     out = []
     for name in names:
-        if not isinstance(name, str) or not _NAME.match(name):
+        if not isinstance(name, str) or not _NAME.fullmatch(name):
             continue
         if name.startswith("_dmarc.") or "._domainkey." in name or name in dmarc_targets:
             out.append(name)
@@ -81,6 +97,7 @@ class Zygote:
         self.spawned: dict[int, asyncio.Future] = {}
         self.exits: dict[int, asyncio.Future] = {}
         self.ready: asyncio.Future | None = None
+        self.spawn_timeouts = 0
 
     def start(self) -> None:
         parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -128,7 +145,9 @@ class Zygote:
                 fut.set_result(None)
 
     def alive(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
+        """Running and answering: a zygote that leaves spawns unanswered (stopped or stuck) counts as dead, so
+        the maintenance loop replaces it (PY-08)."""
+        return self.proc is not None and self.proc.poll() is None and self.spawn_timeouts < SPAWN_TIMEOUTS_DEAD
 
     async def spawn(self, job_id: int, worker_end: socket.socket) -> asyncio.Future:
         if not self.alive() or self.ctrl is None or self.ready is None:
@@ -148,6 +167,9 @@ class Zygote:
             ok = await asyncio.wait_for(spawned, 3.0)
         except asyncio.TimeoutError:
             ok = False
+            self.spawn_timeouts += 1
+        else:
+            self.spawn_timeouts = 0
         if not ok:
             self.exits.pop(job_id, None)
             raise Unavailable("spawn")
@@ -178,8 +200,17 @@ class Supervisor:
         self._inference = inference        # injectable: async (doc) -> dict
         self._ages = ages                  # injectable: async (domain) -> dict
         self._dns = None
+        self._dns_errors = 0
         self._backend_cache: tuple[float, list] = (0.0, [])
         self._psl_version = None
+
+    @property
+    def capacity(self) -> int:
+        return self.config.workers + self.config.queue
+
+    def has_capacity(self, reserved: int = 0) -> bool:
+        """Admission check before a request body is read (PY-19); `reserved` counts bodies being read."""
+        return self.active + self.waiting + reserved < self.capacity
 
     # Lifecycle ------------------------------------------------------------------------------------------
     async def start(self) -> None:
@@ -193,7 +224,7 @@ class Supervisor:
         while True:
             await asyncio.sleep(30)
             try:
-                changed = self.feeds.reload()
+                changed = await self.feeds.reload_async()
                 psl = self.feeds.feeds.get("psl")
                 version = psl.info.version if psl else None
                 if not self.zygote.alive() or ("psl" in changed and version != self._psl_version):
@@ -223,21 +254,27 @@ class Supervisor:
     async def _txt(self, name: str) -> dict:
         if self._resolver is not None:
             status, records = await self._resolver(name)
-            return {"status": status, "txt": records}
+            return {"status": status, "txt": clean_txt(records)}
         resolver = self._dns_resolver()
         if resolver is None:
             return {"status": "error", "txt": []}
         try:
             answer = await resolver.resolve(name, dns.rdatatype.TXT, raise_on_no_answer=True)
-            records = []
-            for rdata in answer:
-                records.append(b"".join(rdata.strings).decode("latin-1")[:8192])
-            return {"status": "ok", "txt": records[:10]}
+            self._dns_errors = 0
+            return {"status": "ok", "txt": clean_txt([b"".join(rdata.strings) for rdata in answer])}
         except dns.resolver.NXDOMAIN:
+            self._dns_errors = 0
             return {"status": "nxdomain", "txt": []}
         except dns.resolver.NoAnswer:
+            self._dns_errors = 0
             return {"status": "nodata", "txt": []}
-        except (dns.exception.DNSException, OSError):
+        except (dns.exception.Timeout, OSError):
+            # The resolver container may have been recreated with a new address: look it up again.
+            self._dns_errors += 1
+            if self._dns_errors >= DNS_ERRORS_RERESOLVE:
+                self._dns, self._dns_errors = None, 0
+            return {"status": "error", "txt": []}
+        except dns.exception.DNSException:
             return {"status": "error", "txt": []}
 
     async def _age(self, domain: str) -> dict:
@@ -318,12 +355,14 @@ class Supervisor:
         if req.get("decide") is not None:
             doc = req["decide"]
             if budget.decide >= 1 or not isinstance(doc, dict) or not isinstance(doc.get("state"), str) \
-                    or len(doc["state"]) > 64 * 1024 or not policy.get("backends"):
+                    or not policy.get("backends"):
                 reply["decide"] = {"status": "error"}
             else:
                 budget.decide += 1
                 # Questions and backends come from the supervisor and the tenant policy, never from the worker.
-                tasks[("decide", "")] = self._decide({"state": doc["state"], "state_version": state.state_version(),
+                # An oversized state is cut, not refused: refusing would switch the classifier off (PY-03).
+                tasks[("decide", "")] = self._decide({"state": doc["state"][:MAX_STATE],
+                                                       "state_version": state.state_version(),
                                                        "language_hint": None, "questions": state.QUESTIONS,
                                                        "policy": {"backends": policy["backends"]}})
         if tasks:
@@ -337,7 +376,7 @@ class Supervisor:
                     reply["ages"][key] = value
                 else:
                     reply["decide"] = value
-        return reply
+        return fit_reply(reply)
 
     # Jobs -----------------------------------------------------------------------------------------------
     async def analyze(self, meta: dict, raw: bytes, policy: dict) -> tuple[int, dict]:
@@ -375,8 +414,11 @@ class Supervisor:
             child.close()
         reader, writer = await asyncio.open_unix_connection(sock=parent, limit=ipc.MAX_FROM_WORKER)
         budget = Budget()
+        requests = 0
         try:
-            writer.write(ipc.encode({"t": "job", "meta": meta, "policy": policy, "now": int(time.time())}, raw))
+            job = {"t": "job", "meta": meta, "policy": policy, "now": int(time.time())}
+            writer.write(ipc.encode_head(job, len(raw)))
+            writer.write(raw)
             await writer.drain()
             while True:
                 try:
@@ -385,6 +427,9 @@ class Supervisor:
                     break
                 kind = msg.get("t")
                 if kind == "req":
+                    requests += 1
+                    if requests > MAX_REQ_FRAMES:
+                        break
                     reply = await self.broker(msg, budget, policy)
                     writer.write(ipc.encode(reply))
                     await writer.drain()
@@ -395,23 +440,22 @@ class Supervisor:
                         return pipeline.failure_result("resources")
                     return result
                 elif kind == "error":
-                    error_kind = msg.get("kind")
-                    if error_kind == "resources":
-                        return pipeline.failure_result("resources")
-                    if error_kind == "sandbox":
+                    if msg.get("kind") == "sandbox":
                         raise Unavailable("sandbox")
-                    raise Unavailable("internal")
+                    # Anything else the mail made the worker do is an answer about the mail, not an outage.
+                    return pipeline.failure_result("resources")
                 else:
                     break
+        except (ConnectionError, OSError):
+            pass   # the worker went away while we were writing: ask the zygote how it ended (below)
         finally:
             writer.close()
-        # Channel closed without a result: ask the zygote how the worker ended.
+        # Channel closed without a result: CPU or wall-clock kill, crash, or a protocol violation. All of them
+        # are caused by the mail (a CPU-heavy mail must not become 504 "retry later", PY-05).
         try:
-            info = await asyncio.wait_for(exited, 2.0)
+            await asyncio.wait_for(exited, 2.0)
         except asyncio.TimeoutError:
-            info = None
-        if info and info.get("reason") == "timeout":
-            raise AnalysisTimeout()
+            pass
         return pipeline.failure_result("resources")
 
     def finalize(self, meta: dict, result: dict) -> dict:
@@ -481,13 +525,45 @@ class Supervisor:
                 "backends": await self.backends()}
 
 
+# Broker replies ----------------------------------------------------------------------------------------------
+
+def clean_txt(records) -> list[str]:
+    """TXT strings as the analysis needs them: printable ASCII only (DKIM and DMARC records are ASCII; every
+    other byte would grow sixfold as a JSON escape), at most 8 records of 2,048 characters (PY-06)."""
+    out = []
+    for record in list(records or [])[:MAX_TXT_RECORDS]:
+        if isinstance(record, str):
+            record = record.encode("latin-1", "ignore")
+        if not isinstance(record, (bytes, bytearray)):
+            continue
+        out.append(bytes(record[:4 * MAX_TXT_CHARS]).translate(None, _TXT_DROP)[:MAX_TXT_CHARS].decode("ascii"))
+    return out
+
+
+def fit_reply(reply: dict) -> dict:
+    """Keeps an encoded reply within ipc.MAX_RESP by turning the largest DNS answers into errors."""
+    if len(ipc.encode(reply)) <= ipc.MAX_RESP:
+        return reply
+    dns_out = reply.get("dns") or {}
+    for name in sorted(dns_out, key=lambda n: len(json.dumps(dns_out[n])), reverse=True):
+        dns_out[name] = {"status": "error", "txt": []}
+        if len(ipc.encode(reply)) <= ipc.MAX_RESP:
+            return reply
+    for key in ("feeds", "decide"):
+        if key in reply and len(ipc.encode(reply)) > ipc.MAX_RESP:
+            reply[key] = [] if key == "feeds" else {"status": "error"}
+            if key == "feeds":
+                reply["feeds_status"] = "partial"
+    return reply
+
+
 # Validation of worker output -------------------------------------------------------------------------------
 
 def validate_answer(ans) -> dict | None:
     if not isinstance(ans, dict):
         return None
     qid = ans.get("id")
-    if not isinstance(qid, str) or not re.match(r"^[a-z][a-z0-9_]{0,63}$", qid):
+    if not isinstance(qid, str) or not _QID.fullmatch(qid):
         return None
     if ans.get("type") not in ("choice", "noul", "score"):
         return None
@@ -519,7 +595,7 @@ def validate_answer(ans) -> dict | None:
     if backend not in framing.KNOWN_BACKENDS or not isinstance(version, str) or len(version) > 64:
         return None
     abstain = ans.get("abstain")
-    if abstain is not None and (not isinstance(abstain, str) or not re.match(r"^[a-z_0-9]{1,40}$", abstain)):
+    if abstain is not None and (not isinstance(abstain, str) or not _ABSTAIN.fullmatch(abstain)):
         return None
     out.update({"backend": backend, "model_version": version, "calibrated": bool(ans.get("calibrated")),
                 "abstain": abstain})
@@ -559,7 +635,7 @@ def validate_result(result) -> dict | None:
         if not isinstance(entry, dict) or entry.get("result") not in ("pass", "fail", "unverifiable"):
             return None
         if validate_evidence({"domain": entry.get("d")}) is None or not isinstance(entry.get("s"), str) \
-                or not re.match(r"^[a-z0-9_.-]{1,63}$", entry["s"]):
+                or not _SELECTOR.fullmatch(entry["s"]):
             return None
         dkim.append({"d": entry["d"], "s": entry["s"], "result": entry["result"], "aligned": bool(entry.get("aligned")),
                      "l_partial": bool(entry.get("l_partial"))})
@@ -573,7 +649,7 @@ def validate_result(result) -> dict | None:
                  "result": dmarc["result"]}
     bands = result.get("campaign_bands")
     if bands is not None and (not isinstance(bands, list) or len(bands) != 4
-                              or not all(isinstance(b, str) and _BAND.match(b) for b in bands)):
+                              or not all(isinstance(b, str) and _BAND.fullmatch(b) for b in bands)):
         return None
     return {"completeness": {s: comp[s] for s in _STAGES}, "signals": clean_signals, "decisions": clean_decisions,
             "auth": {"dkim": dkim, "dmarc": dmarc}, "campaign_bands": bands}

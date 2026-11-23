@@ -7,15 +7,19 @@
 - `jev`: hosted Jev API (`ZETRU_JEV_URL`, `ZETRU_JEV_API_KEY`); mail text leaves the server, so the tenant
   policy must list it explicitly (consent is recorded by the gateway).
 
-All of them may only raise risk; the router enforces that and the 5 s timeout of remote backends.
+All of them may only raise risk; the router enforces that and one deadline per request. Every network or
+format error of a backend becomes `abstain: "backend_error"` for the affected questions (security review PY-12).
+Backends whose mail text leaves this container (`remote = True`: `openjev`, `jev`) need an `https://` URL
+unless the host is the loopback interface (PY-26); the API key and the mail text never travel in clear.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import os
-import urllib.error
+import time
 import urllib.parse
 import urllib.request
 
@@ -24,6 +28,7 @@ from .base import Answer, Backend, abstain_answer
 REMOTE_TIMEOUT_S = 5.0
 LLM_TIMEOUT_S = 8.0
 MAX_RESPONSE = 256 * 1024
+MIN_CALL_S = 0.2       # a call with less time left than this is not started
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -45,11 +50,38 @@ def _post_json(url: str, body: dict, timeout: float, headers: dict | None = None
     return json.loads(raw)
 
 
-def _valid_url(url: str | None) -> bool:
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _valid_url(url: str | None, require_tls: bool = False) -> bool:
     if not url:
         return False
-    parsed = urllib.parse.urlsplit(url)
-    return parsed.scheme in ("http", "https") and bool(parsed.hostname)
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        host = parsed.hostname
+        parsed.port   # raises ValueError for a malformed port
+    except ValueError:
+        return False
+    if not host or parsed.scheme not in ("http", "https"):
+        return False
+    if require_tls and parsed.scheme != "https" and not _is_loopback(host):
+        return False
+    return True
+
+
+def _timeout(limit: float, deadline: float | None) -> float | None:
+    """Per-call timeout: the backend's own limit, shortened to what is left of the router's deadline; None
+    when too little time is left to start a call."""
+    if deadline is None:
+        return limit
+    left = deadline - time.monotonic()
+    return None if left < MIN_CALL_S else min(limit, left)
 
 
 class LLMBackend(Backend):
@@ -66,37 +98,47 @@ class LLMBackend(Backend):
     def enabled(self) -> bool:
         return _valid_url(self.url)
 
-    def _letter_probs(self, prompt: str) -> dict[str, float]:
+    def _letter_probs(self, prompt: str, deadline: float | None) -> dict[str, float]:
+        timeout = _timeout(LLM_TIMEOUT_S, deadline)
+        if timeout is None:
+            raise TimeoutError("deadline")
         body = {"prompt": prompt, "n_predict": 1, "temperature": 0, "n_probs": 5, "grammar": 'root ::= "A" | "B"',
                 "cache_prompt": False}
-        result = self.post(self.url + "/completion", body, LLM_TIMEOUT_S)
+        result = self.post(self.url + "/completion", body, timeout)
+        if not isinstance(result, dict):
+            raise ValueError("response")
         probs = {"A": 0.0, "B": 0.0}
-        for entry in result.get("completion_probabilities", [])[:1]:
+        entries = result.get("completion_probabilities", [])
+        for entry in (entries if isinstance(entries, list) else [])[:1]:
             for cand in entry.get("top_logprobs", entry.get("probs", [])):
                 token = str(cand.get("token", cand.get("tok_str", ""))).strip()
                 if token in probs:
                     if "logprob" in cand:
-                        probs[token] = math.exp(float(cand["logprob"]))
+                        probs[token] = math.exp(min(0.0, float(cand["logprob"])))
                     else:
                         probs[token] = float(cand.get("prob", 0.0))
         total = probs["A"] + probs["B"]
-        if total <= 0:
+        if not total > 0 or not all(0.0 <= v <= 1.0 for v in probs.values()):
             raise ValueError("no letter probabilities")
         return {k: v / total for k, v in probs.items()}
 
     def answer(self, state: str, questions: list[dict], language_hint: str | None) -> dict[str, Answer]:
+        return self.answer_until(state, questions, language_hint, None)
+
+    def answer_until(self, state: str, questions: list[dict], language_hint: str | None,
+                     deadline: float | None) -> dict[str, Answer]:
         out: dict[str, Answer] = {}
         for q in questions:
             if q.get("type") != "noul":
                 out[q["id"]] = abstain_answer(q, self.id, self.version, "unsupported_question")
                 continue
             try:
-                yes_first = self._letter_probs(_prompt(state, q["instructions"], "Yes", "No"))["A"]
-                yes_second = self._letter_probs(_prompt(state, q["instructions"], "No", "Yes"))["B"]
+                yes_first = self._letter_probs(_prompt(state, q["instructions"], "Yes", "No"), deadline)["A"]
+                yes_second = self._letter_probs(_prompt(state, q["instructions"], "No", "Yes"), deadline)["B"]
                 p = (yes_first + yes_second) / 2
                 out[q["id"]] = Answer(id=q["id"], type="noul", backend=self.id, model_version=self.version,
                                       calibrated=self.calibrated, instructions_honoured=True, p_yes=p)
-            except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError):
+            except Exception:  # noqa: BLE001 - any failure of the optional tier is an abstention
                 out[q["id"]] = abstain_answer(q, self.id, self.version, "backend_error")
         return out
 
@@ -124,22 +166,32 @@ class JevCompatibleBackend(Backend):
         self.version = f"{backend_id}-remote"
 
     def enabled(self) -> bool:
-        return self.allowed and _valid_url(self.url)
+        return self.allowed and _valid_url(self.url, require_tls=self.remote)
 
     def answer(self, state: str, questions: list[dict], language_hint: str | None) -> dict[str, Answer]:
+        return self.answer_until(state, questions, language_hint, None)
+
+    def answer_until(self, state: str, questions: list[dict], language_hint: str | None,
+                     deadline: float | None) -> dict[str, Answer]:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        try:
-            result = self.post(self.url + "/v1/systemone",
-                               {"state": state, "state_version": "state-1", "language_hint": language_hint,
-                                "questions": questions}, REMOTE_TIMEOUT_S, headers)
-            answers = {a["id"]: a for a in result.get("answers", []) if isinstance(a, dict) and "id" in a}
-        except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError):
-            answers = {}
+        answers: dict = {}
+        timeout = _timeout(REMOTE_TIMEOUT_S, deadline)
+        if timeout is not None and self.enabled():
+            try:
+                result = self.post(self.url + "/v1/systemone",
+                                   {"state": state, "state_version": "state-1", "language_hint": language_hint,
+                                    "questions": questions}, timeout, headers)
+                items = result.get("answers", []) if isinstance(result, dict) else []
+                if isinstance(items, list):
+                    answers = {a["id"]: a for a in items if isinstance(a, dict) and isinstance(a.get("id"), str)}
+            except Exception:  # noqa: BLE001 - network, HTTP and format errors alike: abstain, keep the rule tier
+                answers = {}
         out: dict[str, Answer] = {}
         for q in questions:
             a = answers.get(q["id"])
             p = a.get("p_yes") if a else None
-            if q.get("type") == "noul" and isinstance(p, (int, float)) and 0 <= p <= 1 and not a.get("abstain"):
+            if q.get("type") == "noul" and isinstance(p, (int, float)) and not isinstance(p, bool) and 0 <= p <= 1 \
+                    and not a.get("abstain"):
                 out[q["id"]] = Answer(id=q["id"], type="noul", backend=self.id,
                                       model_version=str(a.get("model_version", self.version))[:64],
                                       calibrated=self.calibrated, instructions_honoured=True, p_yes=float(p))

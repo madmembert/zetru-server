@@ -18,7 +18,8 @@ _BLOCK = frozenset("p div br tr li h1 h2 h3 h4 h5 h6 table section article heade
                    "pre hr address center dl dt dd form fieldset nav aside main figure figcaption".split())
 _CELL = frozenset(("td", "th"))
 _QUOTE_CLASSES = ("gmail_quote", "moz-cite-prefix", "yahoo_quoted", "divrplyfwdmsg", "outlookmessageheader")
-_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_BRACE = re.compile(r"([{}])")
+_SIMPLE_SELECTOR = re.compile(r"(?:[a-z][a-z0-9]*)?(?:\.[\w-]+)?|#[\w-]+")
 _NAMED_COLOURS = {
     "white": "ffffff", "black": "000000", "red": "ff0000", "green": "008000", "blue": "0000ff",
     "yellow": "ffff00", "gray": "808080", "grey": "808080", "silver": "c0c0c0", "transparent": None,
@@ -60,15 +61,45 @@ def parse_declarations(style: str) -> dict[str, str]:
     return out
 
 
+def strip_css_comments(css: str) -> str:
+    """Removes /* … */ comments; same result as re.sub(r"/\\*.*?\\*/", "", css, flags=re.S) in linear time (the
+    lazy regex rescans the rest of the text from every unclosed "/*", PY-05)."""
+    out, pos = [], 0
+    while True:
+        start = css.find("/*", pos)
+        if start < 0:
+            break
+        end = css.find("*/", start + 2)
+        if end < 0:
+            break
+        out.append(css[pos:start])
+        pos = end + 2
+    out.append(css[pos:])
+    return "".join(out)
+
+
+def css_rules(css: str):
+    """(selector text, declaration text) pairs; same matches as re.finditer(r"([^{}]+)\\{([^{}]*)\\}", css) in
+    linear time (that regex is quadratic on long brace-free text, PY-05)."""
+    parts = _BRACE.split(css)   # text, brace, text, brace, …: texts at even, braces at odd indices
+    i = 1
+    while i < len(parts):
+        if parts[i] == "{" and i + 2 < len(parts) and parts[i + 2] == "}" and parts[i - 1]:
+            yield parts[i - 1], parts[i + 1]
+            i += 4
+        else:
+            i += 2
+
+
 def _strip_at_rules(css: str) -> str:
     """Removes @media/@supports/... blocks (conditional rules would make hiding decisions unreliable)."""
     out = []
     i, n = 0, len(css)
     while i < n:
         if css[i] == "@":
-            brace = css.find("{", i)
             semi = css.find(";", i)
-            if brace < 0 or (0 <= semi < brace):
+            brace = css.find("{", i, semi if semi >= 0 else n)   # bounded search keeps "@;@;…" linear
+            if brace < 0:
                 i = n if semi < 0 else semi + 1
                 continue
             depth, j = 0, brace
@@ -110,12 +141,12 @@ def parse_stylesheets(html: str) -> dict[str, dict[str, str]]:
     rules: dict[str, dict[str, str]] = {}
     count = 0
     for block in _style_blocks(html[:2_000_000]):
-        css = _strip_at_rules(_CSS_COMMENT.sub("", block))
-        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
-            decls = parse_declarations(match.group(2))
-            for selector in match.group(1).split(","):
+        css = _strip_at_rules(strip_css_comments(block))
+        for selectors, declarations in css_rules(css):
+            decls = parse_declarations(declarations)
+            for selector in selectors.split(","):
                 sel = selector.strip().lower()
-                if re.fullmatch(r"(?:[a-z][a-z0-9]*)?(?:\.[\w-]+)?|#[\w-]+", sel) and sel:
+                if sel and _SIMPLE_SELECTOR.fullmatch(sel):
                     rules.setdefault(sel, {}).update(decls)
                     count += 1
                     if count > MAX_STYLE_RULES:

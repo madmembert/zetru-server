@@ -1,8 +1,9 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.29.0@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 # Zetru gateway: one static Go binary on distroless/static, non-root (uid 10001).
-# Base images are build arguments so that they can be pinned by digest at release time.
-ARG GO_IMAGE=golang:1.27-alpine
-ARG BASE_IMAGE=gcr.io/distroless/static-debian12:nonroot
+# The Dockerfile frontend and the base images are pinned by digest (GO-06); refresh them with
+# deploy/pin-images.sh update, which also checks that nothing is left unpinned.
+ARG GO_IMAGE=golang:1.27.4-alpine3.24@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280
+ARG BASE_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 ARG TARGETOS

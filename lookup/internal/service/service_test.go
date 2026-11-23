@@ -10,11 +10,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -340,5 +343,90 @@ func TestHealthz(t *testing.T) {
 	e.svc.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/internal/v1/age?domain=a.com", nil))
 	if rec.Code != 404 {
 		t.Fatalf("POST accepted: %d", rec.Code)
+	}
+}
+
+// TestCacheCapHoldsAtInsert is the regression test for GO-15: answers that need no upstream query
+// (.de, TLDs without RDAP) are cached at request speed; the cap must hold at every insert, not only
+// at the next save.
+func TestCacheCapHoldsAtInsert(t *testing.T) {
+	e := newEnv(t, 100)
+	supplement, _ := rdap.DefaultSupplement()
+	svc, err := New(Options{CacheDir: e.dir, HTTP: e.httpc, Limiter: rdap.NewHostLimiter(1, 5, 0), Supplement: supplement,
+		Now: e.clock, MaxEntries: 100, MaxKeyBytes: 4000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2000; i++ {
+		svc.Age(context.Background(), fmt.Sprintf("domain-%05d.de", i))
+		e.advance(time.Second)
+		if n := svc.Len(); n > 100 {
+			t.Fatalf("cache holds %d entries after %d inserts", n, i+1)
+		}
+		svc.cmu.Lock()
+		kb := svc.keyBytes
+		svc.cmu.Unlock()
+		if kb > 4000 {
+			t.Fatalf("cache holds %d bytes of names", kb)
+		}
+	}
+	// The newest answers are kept.
+	if r := svc.Age(context.Background(), "domain-01999.de"); r.Source != "cache" {
+		t.Fatalf("newest entry evicted: %+v", r)
+	}
+	// Round trip through the streamed file.
+	if err := svc.Save(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := New(Options{CacheDir: e.dir, HTTP: e.httpc, Limiter: rdap.NewHostLimiter(1, 5, 0), Now: e.clock, MaxEntries: 100})
+	if err != nil || again.Len() != svc.Len() {
+		t.Fatalf("reload: %v, %d vs %d entries", err, again.Len(), svc.Len())
+	}
+}
+
+// TestConcurrentLookupsAreBounded is the regression test for GO-15: at most MaxConcurrent lookups
+// run at once; further callers get 503 busy right away.
+func TestConcurrentLookupsAreBounded(t *testing.T) {
+	e := newEnv(t, 100)
+	_ = e.svc.RefreshBootstrap(context.Background())
+	svc, _ := New(Options{HTTP: e.httpc, Limiter: rdap.NewHostLimiter(100, 100, 0), Now: e.clock, MaxConcurrent: 1,
+		BootstrapURL: "https://data.iana.test/rdap/dns.json"})
+	_ = svc.RefreshBootstrap(context.Background())
+	e.reg.delay = 300 * time.Millisecond
+	started := make(chan struct{})
+	done := make(chan int)
+	go func() {
+		close(started)
+		rec := httptest.NewRecorder()
+		svc.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/internal/v1/age?domain=example.com", nil))
+		done <- rec.Code
+	}()
+	<-started
+	time.Sleep(100 * time.Millisecond)
+	rec := httptest.NewRecorder()
+	svc.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/internal/v1/age?domain=same.com", nil))
+	if rec.Code != 503 || !strings.Contains(rec.Body.String(), `"busy"`) {
+		t.Fatalf("second concurrent lookup: %d %s", rec.Code, rec.Body)
+	}
+	if code := <-done; code != 200 {
+		t.Fatalf("first lookup: %d", code)
+	}
+}
+
+// TestCorruptCacheIsDeleted is the regression test for GO-17: the cache holds queried domains and
+// must not outlive its 30-day retention as a moved-aside copy.
+func TestCorruptCacheIsDeleted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rdap-cache.json")
+	_ = os.WriteFile(path, []byte(`{"secret-domain.com":{"r":null,"s":"ok","f":1`), 0o600)
+	_ = os.WriteFile(path+".corrupt", []byte(`{"older-secret.com":{}}`), 0o600)
+	svc, err := New(Options{CacheDir: dir, HTTP: http.DefaultClient, Limiter: rdap.NewHostLimiter(1, 1, 0)})
+	if err != nil || svc.Len() != 0 {
+		t.Fatalf("%v %d", err, svc.Len())
+	}
+	for _, p := range []string{path, path + ".corrupt"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s kept", filepath.Base(p))
+		}
 	}
 }

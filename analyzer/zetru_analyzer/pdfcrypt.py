@@ -3,6 +3,10 @@
 Many legitimate PDFs (statements, invoices) are encrypted with an empty user password only to restrict
 printing or copying; they open without a prompt and must not count as "password-protected" (concept
 `ATT_ENCRYPTED`). Implements ISO 32000 algorithms 2/4/5 (R2–R4, RC4/MD5) and 2.A/2.B (R5/R6, SHA-2/AES).
+
+Parsing is bounded (security review PY-05, PY-09): integers have at most 10 digits, the encryption dictionary is
+looked for only in the first 8 definitions of the referenced object and within 16 KB after each, and at most 16
+`/Encrypt` entries are examined. Every parsing step runs inside the error handler.
 """
 
 from __future__ import annotations
@@ -83,11 +87,14 @@ def _user_password_ok_r5_r6(password: bytes, u: bytes, r: int) -> bool:
 
 # Minimal object parsing -------------------------------------------------------------------------------
 
+MAX_STRING_BYTES = 4096   # /O, /U and /ID strings are at most 48 bytes
+
+
 def _parse_literal(data: bytes, start: int) -> tuple[bytes, int]:
     out = bytearray()
     depth = 1
     i = start + 1
-    n = len(data)
+    n = min(len(data), start + 1 + 4 * MAX_STRING_BYTES)
     while i < n and depth:
         c = data[i]
         if c == 0x5C and i + 1 < n:  # backslash
@@ -134,7 +141,7 @@ def _parse_string_at(data: bytes, i: int) -> tuple[bytes | None, int]:
     if data[i:i + 1] == b"(":
         return _parse_literal(data, i)
     if data[i:i + 1] == b"<" and data[i + 1:i + 2] != b"<":
-        end = data.find(b">", i)
+        end = data.find(b">", i, i + 4 * MAX_STRING_BYTES)
         if end < 0:
             return None, i
         hexdigits = re.sub(rb"\s+", b"", data[i + 1:end])
@@ -152,8 +159,13 @@ def _dict_value(d: bytes, key: bytes) -> tuple[bytes | None, int]:
     return (None, -1) if not m else (d, m.end())
 
 
+MAX_ENCRYPT_REFS = 16
+MAX_OBJECT_DEFS = 8
+MAX_DICT_BYTES = 16 * 1024
+
+
 def _get_int(d: bytes, key: bytes) -> int | None:
-    m = re.search(rb"/" + key + rb"\s+(-?\d+)", d)
+    m = re.search(rb"/" + key + rb"\s+(-?\d{1,10})(?!\d)", d)
     return int(m.group(1)) if m else None
 
 
@@ -165,15 +177,37 @@ def _get_string(d: bytes, key: bytes) -> bytes | None:
     return value
 
 
+_DICT_END = re.compile(rb">>\s*endobj")
+
+
+def _object_dict(data: bytes, num: bytes, gen: bytes) -> bytes | None:
+    """Body of `<<…>>` of the first of at most 8 definitions of object `num gen` whose dictionary is followed by
+    `endobj` within 16 KB (the former lazy regex rescanned the rest of the file for every candidate)."""
+    header = re.compile(rb"(?<![0-9])" + num + rb"\s+" + gen + rb"\s+obj\s*<<")
+    for count, m in enumerate(header.finditer(data)):
+        if count >= MAX_OBJECT_DEFS:
+            break
+        end = _DICT_END.search(data, m.end(), m.end() + MAX_DICT_BYTES)
+        if end:
+            return data[m.end():end.start()]
+    return None
+
+
 def _encrypt_dict(data: bytes) -> bytes | None:
-    for m in re.finditer(rb"/Encrypt\s*(?:(\d+)\s+(\d+)\s+R|<<)", data):
+    tried: set[tuple[bytes, bytes]] = set()
+    for count, m in enumerate(re.finditer(rb"/Encrypt\s*(?:(\d{1,10})\s+(\d{1,5})\s+R|<<)", data)):
+        if count >= MAX_ENCRYPT_REFS:
+            break
         if m.group(1) is not None:
-            obj = re.search(rb"(?<![0-9])" + m.group(1) + rb"\s+" + m.group(2) + rb"\s+obj\s*<<(.*?)>>\s*endobj",
-                            data, re.S)
-            if obj:
-                return obj.group(1)
+            key = (m.group(1), m.group(2))
+            if key in tried:
+                continue
+            tried.add(key)
+            body = _object_dict(data, *key)
+            if body is not None:
+                return body
         else:
-            end = data.find(b">>", m.end())
+            end = data.find(b">>", m.end(), m.end() + MAX_DICT_BYTES)
             if end > 0:
                 return data[m.end():end]
     return None
@@ -192,18 +226,18 @@ def _first_id(data: bytes) -> bytes | None:
 def opens_without_password(data: bytes) -> bool | None:
     """True: opens without a user password; False: a user password (or certificate) is required;
     None: could not be determined."""
-    enc = _encrypt_dict(data)
-    if enc is None:
-        return None
-    if b"/Standard" not in enc:
-        return False  # public-key (certificate) security: cannot be opened without the recipient's key
-    r = _get_int(enc, b"R")
-    p = _get_int(enc, b"P")
-    o = _get_string(enc, b"O")
-    u = _get_string(enc, b"U")
-    if r is None or u is None:
-        return None
     try:
+        enc = _encrypt_dict(data)
+        if enc is None:
+            return None
+        if b"/Standard" not in enc:
+            return False  # public-key (certificate) security: cannot be opened without the recipient's key
+        r = _get_int(enc, b"R")
+        p = _get_int(enc, b"P")
+        o = _get_string(enc, b"O")
+        u = _get_string(enc, b"U")
+        if r is None or u is None:
+            return None
         if r in (2, 3, 4):
             id0 = _first_id(data)
             if p is None or o is None or id0 is None:

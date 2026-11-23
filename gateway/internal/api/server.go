@@ -41,7 +41,8 @@ const (
 	enrollBodyLimit     = 8 << 10
 	smallBodyLimit      = 4 << 10
 	urlCheckBodyLimit   = 16 << 10
-	enrollPerMinute     = 5 // §4.4, per source address
+	enrollPerMinute     = 5  // §4.4, per source address (IPv6: per /64), unknown tokens only
+	enrollUnknownPerMin = 60 // all unknown-token enrolments together (GO-13)
 )
 
 // KeySource provides the live key material (keys.Manager in production).
@@ -65,7 +66,19 @@ type Options struct {
 	HTTPClient      *http.Client  // client for the analyzer (nil = default without proxy)
 	AnalyzeTimeout  time.Duration // gateway-side timeout for one analysis (default 22 s)
 	URLCheckTimeout time.Duration // default 5 s
+
+	// Request bodies (GO-02): ReadTimeout is the http.Server's read timeout (default 120 s); a
+	// body must deliver BodyProgressBytes (default 16 KiB) within every BodyProgressWindow
+	// (default 5 s). AnalyzePerDevice bounds concurrent analyze uploads per device (default 2).
+	ReadTimeout        time.Duration
+	BodyProgressWindow time.Duration
+	BodyProgressBytes  int64
+	AnalyzePerDevice   int
 }
+
+// DefaultReadTimeout is the http.Server ReadTimeout the gateway is run with (a 20 MB mail over a
+// slow mobile uplink).
+const DefaultReadTimeout = 120 * time.Second
 
 // Server implements http.Handler.
 type Server struct {
@@ -73,9 +86,10 @@ type Server struct {
 	nonces     *auth.NonceCache
 	rate       *limits.RateLimiter
 	enrollRate *limits.RateLimiter
-	inflight   chan struct{}
+	admission  *admission
 	budget     *byteBudget
 	health     healthCache
+	started    time.Time
 }
 
 // New creates a server.
@@ -91,6 +105,18 @@ func New(opt Options) *Server {
 	}
 	if opt.URLCheckTimeout == 0 {
 		opt.URLCheckTimeout = 5 * time.Second
+	}
+	if opt.ReadTimeout == 0 {
+		opt.ReadTimeout = DefaultReadTimeout
+	}
+	if opt.BodyProgressWindow == 0 {
+		opt.BodyProgressWindow = 5 * time.Second
+	}
+	if opt.BodyProgressBytes == 0 {
+		opt.BodyProgressBytes = 16 << 10
+	}
+	if opt.AnalyzePerDevice == 0 {
+		opt.AnalyzePerDevice = DefaultAnalyzePerDevice
 	}
 	if opt.HTTPClient == nil {
 		opt.HTTPClient = &http.Client{Transport: &http.Transport{
@@ -113,8 +139,9 @@ func New(opt Options) *Server {
 		nonces:     auth.NewNonceCache(opt.Now, 0),
 		rate:       limits.NewRateLimiter(opt.Now, 0),
 		enrollRate: limits.NewRateLimiter(opt.Now, 50_000),
-		inflight:   make(chan struct{}, opt.Profile.Workers+opt.Profile.Queue),
+		admission:  newAdmission(opt.Profile.Workers+opt.Profile.Queue, opt.AnalyzePerDevice),
 		budget:     &byteBudget{total: opt.Profile.BodyBudget},
+		started:    opt.Now(),
 	}
 }
 
@@ -133,6 +160,7 @@ func (s *Server) Maintain(ctx context.Context, saveEvery time.Duration) {
 		s.nonces.Prune()
 		s.rate.Prune()
 		s.enrollRate.Prune()
+		s.opt.RequestLog.Flush()
 		if err := s.opt.Registry.Refresh(); err != nil {
 			s.opt.ErrorLog.Error("registry reload failed; serving the previous state", "class", "registry")
 		}
@@ -218,20 +246,43 @@ func errorResponse(code string) response {
 	return r
 }
 
+// staleResponse answers stale_timestamp with the gateway's clock inside the signed body
+// (`server_time`, Unix seconds), so the app corrects its clock offset from authenticated data and
+// never from the unsigned Date header (§11.6).
+func staleResponse(now time.Time) response {
+	r := errorResponse("stale_timestamp")
+	body, err := json.Marshal(map[string]map[string]any{"error": {
+		"code": "stale_timestamp", "message": errorMessages["stale_timestamp"], "server_time": now.Unix(),
+	}})
+	if err == nil {
+		r.body = body
+	}
+	return r
+}
+
 func retryResponse(code string, wait time.Duration) response {
 	r := errorResponse(code)
 	r.retryAfter = wait
 	return r
 }
 
-// write sends a response signed with the server identity key over the request nonce (§4.5).
-func (s *Server) write(w http.ResponseWriter, nonce string, resp response) {
+// requestBinding is the binding of §4.5: the SHA-256 of the canonical string rebuilt from the
+// request line and the raw received header values, a missing header counting as empty. It is
+// computed for every request, authenticated or not.
+func requestBinding(r *http.Request) string {
+	return auth.RequestBinding(auth.CanonicalString(r.Method, r.RequestURI, r.Header.Get(auth.HeaderDevice),
+		r.Header.Get(auth.HeaderTimestamp), r.Header.Get(auth.HeaderNonce), r.Header.Get(auth.HeaderContent)))
+}
+
+// write sends a response signed with the server identity key over the request nonce and the
+// request binding (§4.5).
+func (s *Server) write(w http.ResponseWriter, nonce, binding string, resp response) {
 	body := resp.body
 	if resp.status == http.StatusNoContent {
 		body = nil
 	}
 	h := w.Header()
-	h.Set(auth.HeaderSignature, auth.ResponseSigner{Key: s.opt.Keys.Material().Identity}.Sign(nonce, resp.status, body))
+	h.Set(auth.HeaderSignature, auth.ResponseSigner{Key: s.opt.Keys.Material().Identity}.Sign(nonce, resp.status, body, binding))
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
 	if resp.retryAfter > 0 {
@@ -247,22 +298,28 @@ func (s *Server) write(w http.ResponseWriter, nonce string, resp response) {
 	}
 }
 
-// reqCtx collects what the request log may contain.
+// reqCtx collects what the request log may contain, plus the per-request I/O controls.
 type reqCtx struct {
 	endpoint string
 	tenantID string
 	deviceID string
 	bodySize int64
+	authed   bool // authenticated device request or successful enrolment: logged one line each
+	bodyRead bool // the request body was read completely
+
+	ctrl     *http.ResponseController
+	deadline time.Time // overall read deadline of the request (real time)
 }
 
 // ServeHTTP routes, answers and logs one request.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.opt.Now()
-	rc := &reqCtx{endpoint: "unknown"}
+	rc := &reqCtx{endpoint: "unknown", ctrl: http.NewResponseController(w), deadline: time.Now().Add(s.opt.ReadTimeout)}
 	nonce := r.Header.Get(auth.HeaderNonce)
 	if !auth.ValidNonce(nonce) {
 		nonce = "" // responses to requests without a usable nonce are signed over an empty nonce
 	}
+	binding := requestBinding(r)
 	var resp response
 	func() {
 		defer func() {
@@ -273,9 +330,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 		resp = s.route(r, rc)
 	}()
-	s.write(w, nonce, resp)
-	s.opt.RequestLog.Log(reqlog.Entry{Time: start, Endpoint: rc.endpoint, Tenant: rc.tenantID, Device: rc.deviceID,
-		Status: resp.status, Code: resp.code, Duration: s.opt.Now().Sub(start), BodySize: rc.bodySize})
+	if r.ProtoMajor == 1 && r.ContentLength != 0 && !rc.bodyRead {
+		// net/http would first try to read up to 256 KiB of the unread body before sending the
+		// response; a refused, stalled upload would hold the reply until the read timeout. Close
+		// the connection instead (HTTP/1.x only: on HTTP/2 the stream is reset, and this header
+		// would shut down the whole connection).
+		w.Header().Set("Connection", "close")
+	}
+	s.write(w, nonce, binding, resp)
+	entry := reqlog.Entry{Time: start, Endpoint: rc.endpoint, Tenant: rc.tenantID, Device: rc.deviceID,
+		Status: resp.status, Code: resp.code, Duration: s.opt.Now().Sub(start), BodySize: rc.bodySize}
+	if rc.authed {
+		s.opt.RequestLog.Log(entry)
+	} else {
+		s.opt.RequestLog.Count(entry) // one line per minute and endpoint, status, code (GO-03)
+	}
 }
 
 func (s *Server) route(r *http.Request, rc *reqCtx) response {
@@ -325,11 +394,17 @@ type authed struct {
 	release func()
 }
 
-// authenticate runs the checks of §4.4 in their order: device exists and is not revoked →
-// timestamp within ±120 s → nonce not replayed → body hash matches → signature valid → rate limit.
-// The daily quota (analyze only) is checked by the handler right after. maxBody bounds the body
-// (for analyze it is derived from the tenant's max_mail_bytes); analyze requests also take a slot
-// of the in-flight limit and of the body memory budget before their body is read.
+// authenticate runs the checks of §4.4: device exists and is not revoked → timestamp within
+// ±120 s (and not from before a restart, see startWindow) → nonce not in the replay cache →
+// signature over the canonical string valid → nonce recorded → body hash matches → rate limit.
+// The daily quota (analyze only) is checked by the handler right after.
+//
+// The signature covers the Zetru-Content-SHA256 header, not the body, so it is verified before
+// the body is read: a request without a valid signature never records a nonce (GO-08), never
+// takes an analyze slot or body budget and never makes the gateway read its body (GO-02). The body
+// is then checked against the signed hash. maxBody bounds the body (for analyze it is derived from
+// the tenant's max_mail_bytes); analyze requests must carry a Content-Length and take a slot of
+// the admission limits and of the body memory budget before their body is read.
 func (s *Server) authenticate(r *http.Request, rc *reqCtx, class string, maxBody int64, analyze bool) (*authed, *response) {
 	fail := func(code string) (*authed, *response) {
 		resp := errorResponse(code)
@@ -356,14 +431,36 @@ func (s *Server) authenticate(r *http.Request, rc *reqCtx, class string, maxBody
 		maxBody = int64(4 + MaxMetaBytes + s.effective(tenant).maxMail)
 	}
 
+	now := s.opt.Now()
 	timestamp := r.Header.Get(auth.HeaderTimestamp)
-	if err := auth.CheckTimestamp(timestamp, s.opt.Now()); err != nil {
-		return fail("stale_timestamp")
+	if err := auth.CheckTimestamp(timestamp, now); err != nil || s.inStartWindow(timestamp, now) {
+		resp := staleResponse(now)
+		return nil, &resp
 	}
 	nonce := r.Header.Get(auth.HeaderNonce)
 	if !auth.ValidNonce(nonce) {
 		return fail("bad_request")
 	}
+	if s.nonces.Seen(device.ID, nonce) {
+		return fail("replayed_nonce")
+	}
+	contentHash := r.Header.Get(auth.HeaderContent)
+	if !auth.ValidContentHash(contentHash) {
+		return fail("bad_request")
+	}
+	target := r.RequestURI
+	if !strings.HasPrefix(target, "/") {
+		return fail("bad_request")
+	}
+	pub, err := auth.ParseDevicePublicKey(device.PublicKey)
+	if err != nil {
+		return fail("bad_signature")
+	}
+	canonical := auth.CanonicalString(r.Method, target, deviceID, timestamp, nonce, contentHash)
+	if err := auth.VerifySignature(pub, canonical, r.Header.Get(auth.HeaderSignature)); err != nil {
+		return fail("bad_signature")
+	}
+	// Signed by the device key: record the nonce (atomic; a concurrent copy loses here).
 	if err := s.nonces.Reserve(device.ID, nonce); err != nil {
 		if errors.Is(err, auth.ErrNonceCacheFull) {
 			resp := retryResponse("rate_limited", 30*time.Second)
@@ -371,16 +468,12 @@ func (s *Server) authenticate(r *http.Request, rc *reqCtx, class string, maxBody
 		}
 		return fail("replayed_nonce")
 	}
-	// From here on, a failure releases the nonce: only authenticated requests keep theirs.
+	// From here on, a failure releases the nonce: only fully authenticated requests keep theirs.
 	release := func() {}
 	failAfterNonce := func(resp response) (*authed, *response) {
 		s.nonces.Release(device.ID, nonce)
 		release()
 		return nil, &resp
-	}
-	contentHash := r.Header.Get(auth.HeaderContent)
-	if !auth.ValidContentHash(contentHash) {
-		return failAfterNonce(errorResponse("bad_request"))
 	}
 	tooLarge := "bad_request"
 	if analyze {
@@ -390,25 +483,23 @@ func (s *Server) authenticate(r *http.Request, rc *reqCtx, class string, maxBody
 		return failAfterNonce(errorResponse(tooLarge))
 	}
 	if analyze {
-		select {
-		case s.inflight <- struct{}{}:
-		default:
+		if r.ContentLength < 0 {
+			return failAfterNonce(errorResponse("bad_request")) // the slot is sized by Content-Length
+		}
+		if !s.admission.acquire(device.ID, tenant.ID) {
 			return failAfterNonce(errorResponse("busy"))
 		}
-		reserve := maxBody
-		if r.ContentLength >= 0 {
-			reserve = r.ContentLength
-		}
+		reserve := r.ContentLength
 		if !s.budget.acquire(reserve) {
-			<-s.inflight
+			s.admission.release(device.ID, tenant.ID)
 			return failAfterNonce(errorResponse("busy"))
 		}
 		release = func() {
 			s.budget.release(reserve)
-			<-s.inflight
+			s.admission.release(device.ID, tenant.ID)
 		}
 	}
-	body, sum, err := readBody(r.Body, r.ContentLength, maxBody)
+	body, sum, err := s.readBody(r, rc, maxBody)
 	rc.bodySize = int64(len(body))
 	if errors.Is(err, errTooLarge) {
 		return failAfterNonce(errorResponse(tooLarge))
@@ -419,19 +510,8 @@ func (s *Server) authenticate(r *http.Request, rc *reqCtx, class string, maxBody
 	if !strings.EqualFold(hex.EncodeToString(sum), contentHash) {
 		return failAfterNonce(errorResponse("bad_signature"))
 	}
-	pub, err := auth.ParseDevicePublicKey(device.PublicKey)
-	if err != nil {
-		return failAfterNonce(errorResponse("bad_signature"))
-	}
-	target := r.RequestURI
-	if !strings.HasPrefix(target, "/") {
-		return failAfterNonce(errorResponse("bad_request"))
-	}
-	canonical := auth.CanonicalString(r.Method, target, timestamp, nonce, contentHash)
-	if err := auth.VerifySignature(pub, canonical, r.Header.Get(auth.HeaderSignature)); err != nil {
-		return failAfterNonce(errorResponse("bad_signature"))
-	}
 	// Authenticated. Rate limits now apply; the nonce stays recorded.
+	rc.authed = true
 	perMinute := s.opt.Profile.OtherPerMinute
 	switch class {
 	case "analyze":
@@ -448,6 +528,33 @@ func (s *Server) authenticate(r *http.Request, rc *reqCtx, class string, maxBody
 		s.opt.ErrorLog.Error("updating last_seen_day failed", "class", "registry")
 	}
 	return &authed{device: device, tenant: tenant, body: body, release: release}, nil
+}
+
+// inStartWindow reports a request signed before this process started, during the first
+// 2 × ClockSkew after the start. The replay cache is in memory only, so without this check a
+// request captured shortly before a restart could be replayed after it (GO-11). A genuine client
+// whose clock lags gets stale_timestamp and retries with a fresh timestamp (§11.6).
+func (s *Server) inStartWindow(timestamp string, now time.Time) bool {
+	if now.Sub(s.started) >= 2*auth.ClockSkew {
+		return false
+	}
+	seconds, err := strconv.ParseInt(timestamp, 10, 64)
+	return err == nil && seconds < s.started.Unix()
+}
+
+// readBody reads a request body with the minimum-progress deadline of progressReader.
+func (s *Server) readBody(r *http.Request, rc *reqCtx, limit int64) ([]byte, []byte, error) {
+	var body io.Reader = r.Body
+	if rc.ctrl != nil {
+		p := &progressReader{r: r.Body, ctrl: rc.ctrl, window: s.opt.BodyProgressWindow,
+			minBytes: s.opt.BodyProgressBytes, overall: rc.deadline}
+		p.arm()
+		defer p.done()
+		body = p
+	}
+	data, sum, err := readBody(body, r.ContentLength, limit)
+	rc.bodyRead = err == nil
+	return data, sum, err
 }
 
 var errTooLarge = errors.New("body too large")
@@ -535,12 +642,4 @@ func decodeJSON(body []byte, v any) bool {
 	}
 	var extra json.RawMessage
 	return dec.Decode(&extra) == io.EOF
-}
-
-func remoteHost(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

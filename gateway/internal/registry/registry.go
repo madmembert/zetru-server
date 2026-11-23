@@ -5,11 +5,14 @@
 //   - atomic writes (temp file, fsync, rename, directory fsync) and a copy of the previous version
 //     in registry.json.bak;
 //   - an exclusive flock around every read-modify-write cycle, so the CLI (pair, revoke, …) and the
-//     running server can change the file concurrently without losing updates;
+//     running server can change the file concurrently without losing updates; the in-memory lock is
+//     held only to swap the new state in, never across file I/O, so lookups do not wait for fsync;
 //   - change detection on every lookup (inode/size/mtime), so a revocation made with the CLI takes
 //     effect on the next request;
 //   - strict validation on load: a corrupt file stops the gateway instead of silently unpairing
-//     every device.
+//     every device;
+//   - after a tenant deletion the backup copy is rewritten from the new state, so the deleted
+//     tenant's devices do not survive in registry.json.bak (§14.2).
 package registry
 
 import (
@@ -25,6 +28,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -236,6 +240,10 @@ func (s state) validate() error {
 // refresh reloads the in-memory state when the file was replaced by another process. A reload
 // error keeps the previous state (our own writes are atomic, so this needs an external cause)
 // and is returned to the caller.
+//
+// The file is read and installed under the exclusive lock. mutate installs its state only after
+// the file is written, so a refresh can never install a state older than one already installed
+// (a read outside the lock could, and briefly undid revocations: GO-09).
 func (r *Registry) refresh() error {
 	stamp, err := fsutil.StatStamp(r.path)
 	if err != nil {
@@ -247,14 +255,36 @@ func (r *Registry) refresh() error {
 	if same {
 		return nil
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if stamp, err = fsutil.StatStamp(r.path); err != nil || stamp == r.stamp {
+		return err // another caller reloaded meanwhile
+	}
 	st, stamp, _, err := r.readFile()
 	if err != nil {
 		return err
 	}
+	if testHookRefreshRead != nil {
+		testHookRefreshRead()
+	}
+	r.st, r.stamp = st, stamp
+	return nil
+}
+
+// testHookRefreshRead runs between reading the file and installing it in refresh (tests only).
+var testHookRefreshRead func()
+
+func (r *Registry) install(st state, stamp fsutil.Stamp) {
 	r.mu.Lock()
 	r.st, r.stamp = st, stamp
 	r.mu.Unlock()
-	return nil
+}
+
+// Generation returns the generation of the in-memory state (for tests).
+func (r *Registry) Generation() uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.st.Generation
 }
 
 // Refresh forces a change check; the server calls it periodically to surface load errors.
@@ -262,8 +292,17 @@ func (r *Registry) Refresh() error { return r.refresh() }
 
 // mutate applies fn to the latest on-disk state under the cross-process lock and persists it.
 func (r *Registry) mutate(fn func(st *state, now time.Time) error) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	return r.mutateWith(fn, false)
+}
+
+// mutateWith is mutate; with scrubBackup the backup copy receives the new state instead of the
+// previous one (used when data is deleted for good).
+//
+// The cross-process flock serialises all writers (also goroutines of this process: every call
+// opens the lock file anew). The in-memory state is swapped under r.mu after the file is written
+// and before the flock is released, so states are installed in write order and lookups never wait
+// for disk I/O (GO-12).
+func (r *Registry) mutateWith(fn func(st *state, now time.Time) error, scrubBackup bool) error {
 	lock, err := fsutil.LockFile(r.lockPath)
 	if err != nil {
 		return err
@@ -273,10 +312,10 @@ func (r *Registry) mutate(fn func(st *state, now time.Time) error) error {
 	if err != nil {
 		return err
 	}
-	r.st, r.stamp = st, stamp
 	next := st.clone()
 	now := r.now()
 	if err := fn(&next, now); err != nil {
+		r.install(st, stamp) // the file is the newest state; keep memory in step with it
 		return err
 	}
 	pruneTokens(&next, now)
@@ -289,15 +328,19 @@ func (r *Registry) mutate(fn func(st *state, now time.Time) error) error {
 		return err
 	}
 	if raw != nil {
-		if err := fsutil.WriteFileAtomic(r.bakPath, raw, 0o600); err != nil {
+		backup := raw
+		if scrubBackup {
+			backup = data
+		}
+		if err := fsutil.WriteFileAtomic(r.bakPath, backup, 0o600); err != nil {
 			return err
 		}
 	}
 	if err := fsutil.WriteFileAtomic(r.path, data, 0o600); err != nil {
 		return err
 	}
-	r.st = next
-	r.stamp, err = fsutil.StatStamp(r.path)
+	stamp, err = fsutil.StatStamp(r.path)
+	r.install(next, stamp)
 	return err
 }
 
@@ -331,6 +374,24 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 // ValidUUID checks the lowercase canonical UUID form used for all IDs.
 func ValidUUID(s string) bool { return uuidPattern.MatchString(s) }
+
+// UnsafeRune reports characters that must not appear in device labels: control characters,
+// Unicode format characters (Cf: bidi overrides and isolates, zero-width characters), line and
+// paragraph separators and private-use characters. They let one label look like another in the
+// device list (GO-18).
+func UnsafeRune(c rune) bool {
+	return unicode.IsControl(c) || unicode.In(c, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Co) || c == utf8.RuneError
+}
+
+// CleanLabel removes unsafe characters (UnsafeRune) and invalid UTF-8 from a label.
+func CleanLabel(s string) string {
+	return strings.Map(func(c rune) rune {
+		if UnsafeRune(c) {
+			return -1
+		}
+		return c
+	}, s)
+}
 
 func validateName(name string) error {
 	if name == "" || utf8.RuneCountInString(name) > 64 || !utf8.ValidString(name) {
@@ -446,11 +507,45 @@ func (r *Registry) CreateEnrolmentToken(tenantID string, ttl time.Duration) (str
 	return value, expires, err
 }
 
+// TokenStatus answers from the in-memory state whether an enrolment token can be used: nil,
+// ErrTokenUnknown, ErrTokenUsed or ErrTokenExpired. It takes no file lock (GO-12, GO-13).
+func (r *Registry) TokenStatus(tokenValue string) error {
+	wanted := []byte(hashToken(tokenValue))
+	_ = r.refresh()
+	now := r.now().Unix()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	status := ErrTokenUnknown
+	for _, t := range r.st.Tokens {
+		if subtle.ConstantTimeCompare([]byte(t.Hash), wanted) != 1 {
+			continue
+		}
+		end := max(t.ExpiresAt, t.UsedAt)
+		switch {
+		case now > end+int64(tokenMemory/time.Second):
+			status = ErrTokenUnknown // forgotten at the next write (pruneTokens)
+		case t.UsedAt != 0:
+			status = ErrTokenUsed
+		case now >= t.ExpiresAt:
+			status = ErrTokenExpired
+		default:
+			status = nil
+		}
+	}
+	return status
+}
+
 // Enroll consumes a token and registers a device with the given public key (base64 X9.63).
+// Unsafe characters are removed from the label (CleanLabel). Unknown, used and expired tokens are
+// answered from memory; only a token that can succeed enters the write path.
 func (r *Registry) Enroll(tokenValue, publicKey, label string) (Device, error) {
 	if _, err := auth.ParseDevicePublicKey(publicKey); err != nil {
 		return Device{}, err
 	}
+	if err := r.TokenStatus(tokenValue); err != nil {
+		return Device{}, err
+	}
+	label = CleanLabel(label)
 	wanted := []byte(hashToken(tokenValue))
 	var device Device
 	err := r.mutate(func(st *state, now time.Time) error {
@@ -594,9 +689,10 @@ func (r *Registry) RotateKey(id, publicKey string) error {
 	})
 }
 
-// DeleteTenant removes a tenant and all its devices and tokens (§4.6).
+// DeleteTenant removes a tenant and all its devices and tokens (§4.6). The backup copy is rewritten
+// from the new state, so nothing of the tenant remains in registry.json.bak.
 func (r *Registry) DeleteTenant(id string) error {
-	return r.mutate(func(st *state, _ time.Time) error {
+	return r.mutateWith(func(st *state, _ time.Time) error {
 		tenants := st.Tenants[:0]
 		found := false
 		for _, t := range st.Tenants {
@@ -625,5 +721,5 @@ func (r *Registry) DeleteTenant(id string) error {
 		}
 		st.Tokens = tokens
 		return nil
-	})
+	}, true)
 }

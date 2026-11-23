@@ -116,3 +116,43 @@ def test_domain_in_link_text():
     assert urls.domain_in_text("paypal.com/konto") == "paypal.com"
     assert urls.domain_in_text("https://www.example.org/x") == "www.example.org"
     assert urls.domain_in_text("Jetzt ansehen") is None
+
+
+# Security review PY-01: inputs that used to raise inside canonicalize()/url_sha256() (the worker then answered
+# 503 analyzer_unavailable). Each is a clean rejection now, or the canonical form the app's
+# LinkCanonicalizer.swift computes (ASCII digits only, leading zeros ignored, at most 5 significant digits).
+@pytest.mark.parametrize("raw", [
+    "http://example.com:²/",                       # superscript two: str.isdigit() but int() raises
+    "http://example.com:８０/",                 # fullwidth "80": Swift rejects non-ASCII digits
+    "http://example.com:٨٠٨٠/",     # Arabic-Indic "8080"
+    "http://example.com:" + "9" * 5000 + "/",           # beyond int()'s 4,300-digit limit
+    "http://example.com:100000/",
+    "https://example.com/a\ud800b",                     # lone surrogate (unicode_escape/utf-7 body, JSON QR)
+    "https://example.com/a#\ud800",
+    "https://u\udc80@example.com/",
+    "https://ex\ud800ample.com/",
+    "https://example.com:\ud800/",
+])
+def test_canonicalize_rejects_hostile_ports_and_surrogates(raw):
+    assert urls.canonicalize(raw) is None
+    assert urls.make_link(raw, "html", PSL) is None
+
+
+@pytest.mark.parametrize("raw,canonical", [
+    ("http://example.com:" + "0" * 4999 + "80/", "http://example.com/"),
+    ("https://example.com:0000008080/x", "https://example.com:8080/x"),
+    ("http://example.com:000000/", "http://example.com:0/"),
+    ("http://example.com:065535/", "http://example.com:65535/"),
+])
+def test_canonicalize_port_leading_zeros_like_the_app(raw, canonical):
+    assert urls.canonicalize(raw)[0] == canonical
+
+
+def test_urldefense_unwrap_is_linear():
+    import time
+
+    wrapped = "https://urldefense.com/v3/__" + "/v3/__" * 1300 + "x"
+    canonical, host, _ = urls.canonicalize(wrapped)
+    started = time.monotonic()
+    assert urls.unwrap(canonical, host, default_packs()) is None
+    assert time.monotonic() - started < 0.5

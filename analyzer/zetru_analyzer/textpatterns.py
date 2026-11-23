@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import re
 import unicodedata
 
@@ -15,7 +16,7 @@ PHONE = re.compile(
     r"|\(?0\d{1,5}\)?(?:[\s./-]?\d{1,5}){1,5}"
     r"|(?:1[\s.-])?\(?[2-9]\d{2}\)?[\s.-]\d{3}[\s.-]\d{4}"
     r")(?![\w])")
-_DATE = re.compile(r"^\d{1,4}[./-]\d{1,2}[./-]\d{1,4}$")
+_DATE = re.compile(r"\d{1,4}[./-]\d{1,2}[./-]\d{1,4}")
 AMOUNT = re.compile(
     r"(?i)(?:(?:€|eur|usd|us\$|\$|£|gbp|chf)\s?\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{2})?"
     r"|\b\d{1,3}(?:[.,\s]\d{3})*(?:[.,]\d{2})?\s?(?:€|eur\b|euro\b|usd\b|\$|£|gbp\b|chf\b|dollars?\b))")
@@ -36,15 +37,32 @@ def normalize_visible(text: str) -> str:
     return unicodedata.normalize("NFKC", strip_invisible(text))
 
 
+MAX_PHONE_CANDIDATES = 2000
+
+
+def _inside_any(pos: int, starts: list[int], spans: list[tuple[int, int]], end_inclusive: bool) -> bool:
+    """Whether `pos` lies in one of the sorted, disjoint `spans` ([a, b) or, with end_inclusive, (a, b])."""
+    k = (bisect.bisect_left(starts, pos) if end_inclusive else bisect.bisect_right(starts, pos)) - 1
+    if k < 0:
+        return False
+    a, b = spans[k]
+    return a < pos <= b if end_inclusive else a <= pos < b
+
+
 def find_phones(text: str, limit: int = 20) -> list[str]:
+    """Phone numbers outside IBANs. IBAN spans are checked with a binary search (a scan over all spans per
+    candidate was quadratic, PY-05); at most 2,000 candidates are examined."""
     iban_spans = [m.span() for m in IBAN.finditer(text)]
+    starts = [a for a, _ in iban_spans]
     out = []
-    for m in PHONE.finditer(text):
-        if any(a <= m.start() < b or a < m.end() <= b for a, b in iban_spans):
+    for count, m in enumerate(PHONE.finditer(text)):
+        if count >= MAX_PHONE_CANDIDATES:
+            break
+        if _inside_any(m.start(), starts, iban_spans, False) or _inside_any(m.end(), starts, iban_spans, True):
             continue
         candidate = m.group(0).strip()
         digits = re.sub(r"\D", "", candidate)
-        if not 7 <= len(digits) <= 15 or _DATE.match(candidate):
+        if not 7 <= len(digits) <= 15 or _DATE.fullmatch(candidate):
             continue
         out.append(candidate)
         if len(out) >= limit:

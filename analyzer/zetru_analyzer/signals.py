@@ -69,11 +69,11 @@ SIGNAL_THRESHOLD = 0.80
 MAX_SIGNALS = 64
 MAX_PER_ID = 8
 
-_ID = re.compile(r"^[A-Z][A-Z0-9_]{2,47}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_PART = re.compile(r"^[0-9]{1,4}(?:\.[0-9]{1,4}){0,24}$")
-_DOMAIN = re.compile(r"^[a-z0-9_.\-\[\]:]{1,253}$")
-_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
+_ID = re.compile(r"[A-Z][A-Z0-9_]{2,47}")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_PART = re.compile(r"[0-9]{1,4}(?:\.[0-9]{1,4}){0,24}")
+_DOMAIN = re.compile(r"[a-z0-9_.\-\[\]:]{1,253}")
+_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,47}")
 
 
 def validate_evidence(evidence: dict) -> dict | None:
@@ -83,16 +83,16 @@ def validate_evidence(evidence: dict) -> dict | None:
     out: dict = {}
     for key, value in evidence.items():
         if key in ("domain", "ref_domain"):
-            if not isinstance(value, str) or not _DOMAIN.match(value):
+            if not isinstance(value, str) or not _DOMAIN.fullmatch(value):
                 return None
         elif key == "url_sha256":
-            if not isinstance(value, str) or not _HEX64.match(value):
+            if not isinstance(value, str) or not _HEX64.fullmatch(value):
                 return None
         elif key == "part":
-            if not isinstance(value, str) or not _PART.match(value):
+            if not isinstance(value, str) or not _PART.fullmatch(value):
                 return None
         elif key in ("feed", "brand"):
-            if not isinstance(value, str) or not _KEY.match(value):
+            if not isinstance(value, str) or not _KEY.fullmatch(value):
                 return None
         elif key == "p":
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
@@ -111,7 +111,7 @@ def validate_signal(sig: dict) -> dict | None:
     if not isinstance(sig, dict):
         return None
     sid = sig.get("id")
-    if not isinstance(sid, str) or not _ID.match(sid) or sid not in FALLBACK:
+    if not isinstance(sid, str) or not _ID.fullmatch(sid) or sid not in FALLBACK:
         return None
     evidence = validate_evidence(sig.get("evidence") or {})
     if evidence is None:

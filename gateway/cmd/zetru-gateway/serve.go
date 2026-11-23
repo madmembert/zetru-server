@@ -24,6 +24,7 @@ import (
 	"zetru.app/gateway/internal/auth"
 	"zetru.app/gateway/internal/campaign"
 	"zetru.app/gateway/internal/config"
+	"zetru.app/gateway/internal/fsutil"
 	"zetru.app/gateway/internal/keys"
 	"zetru.app/gateway/internal/limits"
 	"zetru.app/gateway/internal/registry"
@@ -65,7 +66,15 @@ func cmdServe(args []string) error {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
 	}
-	counters, err := campaign.Open(filepath.Join(stateDir, "campaign.json"), mgr.Material().Fingerprint, nil)
+	// Counter files of earlier versions (JSON format, moved-aside copies) would otherwise outlive
+	// the 30-day retention of §14.2 (GO-17).
+	for _, old := range []string{"campaign.json", "campaign.json.discarded"} {
+		if err := fsutil.RemoveIfExists(filepath.Join(stateDir, old)); err != nil {
+			return err
+		}
+	}
+	counters, err := campaign.Open(filepath.Join(stateDir, "campaign.dat"), mgr.Material().Fingerprint, nil,
+		campaign.Limits{MaxBands: profile.CampaignMaxBands, MaxRefs: profile.CampaignMaxRefs})
 	if err != nil {
 		return err
 	}
@@ -99,13 +108,16 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Bounded connections: in total and per client address (IPv6: per /64), GO-12.
+	listener = api.LimitListener(listener, profile.MaxConns, profile.MaxConnsPerAddr)
 	httpServer := &http.Server{
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       120 * time.Second, // a 20 MB mail over a slow mobile uplink
+		ReadTimeout:       api.DefaultReadTimeout, // a 20 MB mail over a slow mobile uplink
 		WriteTimeout:      150 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
+		HTTP2:             &http.HTTP2Config{MaxConcurrentStreams: 32},
 		ErrorLog:          api.ServerErrorLog(logger),
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -208,7 +220,9 @@ func cmdHealthcheck(args []string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
-	if !auth.VerifyResponse(mat.Identity.Public().(ed25519.PublicKey), "", resp.StatusCode, body, resp.Header.Get(auth.HeaderSignature)) {
+	// The request carries no Zetru headers: nonce and binding cover empty values (§4.5).
+	binding := auth.RequestBinding(auth.CanonicalString(http.MethodGet, "/healthz", "", "", "", ""))
+	if !auth.VerifyResponse(mat.Identity.Public().(ed25519.PublicKey), "", resp.StatusCode, body, binding, resp.Header.Get(auth.HeaderSignature)) {
 		return errors.New("response signature invalid")
 	}
 	return nil

@@ -1,6 +1,6 @@
 // Package auth implements the request-signing protocol of concept §4.4 (canonical string, ECDSA
 // P-256 device signatures, timestamp window, per-device nonce cache) and the Ed25519 response
-// signatures of §4.5.
+// signatures of §4.5, which are bound to the request through the request binding.
 package auth
 
 import (
@@ -44,10 +44,20 @@ var (
 	ErrNonceCacheFull = errors.New("rate_limited")
 )
 
-// CanonicalString builds the string a device signs (§4.4): the lines `ZETRU1`, HTTP method, path
-// including query, timestamp, nonce and body hash, joined with "\n" (no trailing newline).
-func CanonicalString(method, pathAndQuery, timestamp, nonce, contentHash string) string {
-	return strings.Join([]string{"ZETRU1", method, pathAndQuery, timestamp, nonce, contentHash}, "\n")
+// CanonicalString builds the string a device signs (§4.4): the seven lines `ZETRU1`, HTTP method,
+// path including query, Zetru-Device, Zetru-Timestamp, Zetru-Nonce and Zetru-Content-SHA256,
+// joined with "\n" (no trailing newline).
+func CanonicalString(method, pathAndQuery, device, timestamp, nonce, contentHash string) string {
+	return strings.Join([]string{"ZETRU1", method, pathAndQuery, device, timestamp, nonce, contentHash}, "\n")
+}
+
+// RequestBinding is the lowercase hex SHA-256 of a request's canonical string (§4.5). The gateway
+// computes it from the request line and the raw received header values (a missing header counts
+// as the empty string) and signs it into every response, so a response can only be used for the
+// request it answers.
+func RequestBinding(canonical string) string {
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 // BodyHash returns the lowercase hex SHA-256 of body.
@@ -130,9 +140,9 @@ func VerifySignature(key *ecdsa.PublicKey, canonical, signatureB64 string) error
 
 // NonceCache is the in-memory replay cache (§4.4): per device, 5-minute retention.
 //
-// Reserve records a nonce atomically; Release removes it again when the request that reserved it
-// fails a later authentication step (body hash or signature). Only nonces of authenticated requests
-// therefore stay in the cache, which keeps unauthenticated traffic from filling it.
+// The gateway reserves a nonce (Reserve, atomic) only after the request signature has been
+// verified, so unsigned traffic never occupies the cache. Release removes the nonce again when the
+// request then fails the body check. Only nonces of authenticated requests stay in the cache.
 type NonceCache struct {
 	mu        sync.Mutex
 	now       func() time.Time
@@ -179,6 +189,17 @@ func (c *NonceCache) Reserve(device, nonce string) error {
 	return nil
 }
 
+// Seen reports whether nonce is a live nonce of device. It records nothing; the gateway uses it
+// to answer a replay before it spends a signature verification, and reserves with Reserve only
+// after the signature is valid.
+func (c *NonceCache) Seen(device, nonce string) bool {
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	expiry, seen := c.nonces[device][nonce]
+	return seen && expiry.After(now)
+}
+
 // Release forgets a nonce reserved by a request that then failed authentication.
 func (c *NonceCache) Release(device, nonce string) {
 	c.mu.Lock()
@@ -222,9 +243,11 @@ func (c *NonceCache) Devices() int {
 	return len(c.nonces)
 }
 
-// ResponseSigningString binds a response to the request nonce and status (§4.5).
-func ResponseSigningString(nonce string, status int, body []byte) string {
-	return "ZETRU1-RESP\n" + nonce + "\n" + strconv.Itoa(status) + "\n" + BodyHash(body)
+// ResponseSigningString is the message a response signature covers (§4.5): the lines
+// `ZETRU1-RESP`, request nonce, HTTP status, SHA-256 hex of the response body and the request
+// binding (RequestBinding), joined with "\n".
+func ResponseSigningString(nonce string, status int, body []byte, binding string) string {
+	return "ZETRU1-RESP\n" + nonce + "\n" + strconv.Itoa(status) + "\n" + BodyHash(body) + "\n" + binding
 }
 
 // ResponseSigner signs responses with the server identity key.
@@ -233,15 +256,15 @@ type ResponseSigner struct {
 }
 
 // Sign returns the base64 Ed25519 signature for a response.
-func (s ResponseSigner) Sign(nonce string, status int, body []byte) string {
-	return base64.StdEncoding.EncodeToString(ed25519.Sign(s.Key, []byte(ResponseSigningString(nonce, status, body))))
+func (s ResponseSigner) Sign(nonce string, status int, body []byte, binding string) string {
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(s.Key, []byte(ResponseSigningString(nonce, status, body, binding))))
 }
 
 // VerifyResponse checks a response signature (used by the healthcheck and tests).
-func VerifyResponse(pub ed25519.PublicKey, nonce string, status int, body []byte, signatureB64 string) bool {
+func VerifyResponse(pub ed25519.PublicKey, nonce string, status int, body []byte, binding, signatureB64 string) bool {
 	sig, err := base64.StdEncoding.DecodeString(signatureB64)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return false
 	}
-	return ed25519.Verify(pub, []byte(ResponseSigningString(nonce, status, body)), sig)
+	return ed25519.Verify(pub, []byte(ResponseSigningString(nonce, status, body, binding)), sig)
 }

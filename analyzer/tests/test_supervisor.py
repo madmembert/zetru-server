@@ -207,12 +207,14 @@ def test_silent_worker_times_out(tmp_path):
         run_with(tmp_path, behaviour, timeout="0.5")
 
 
-def test_worker_killed_on_wall_clock_maps_to_timeout(tmp_path):
+def test_worker_killed_on_wall_clock_is_a_resource_failure(tmp_path):
+    # PY-05: a mail that exhausts the worker's CPU or wall clock gets a 200 with a caution, not "retry later".
     async def behaviour(reader, writer):
         await _read_job(reader)
 
-    with pytest.raises(AnalysisTimeout):
-        run_with(tmp_path, behaviour, exit_reason="timeout")
+    status, resp = run_with(tmp_path, behaviour, exit_reason="timeout")
+    assert status == 200 and resp["completeness"]["parse"] == "failed"
+    assert {"MIME_MALFORMED", "MIME_LIMITS"} <= {s["id"] for s in resp["signals"]}
 
 
 def test_worker_crash_without_result_is_resource_failure(tmp_path):
@@ -223,10 +225,21 @@ def test_worker_crash_without_result_is_resource_failure(tmp_path):
     assert status == 200 and "MIME_LIMITS" in {s["id"] for s in resp["signals"]}
 
 
-def test_worker_internal_error_is_unavailable(tmp_path):
+def test_worker_internal_error_is_a_resource_failure(tmp_path):
+    # PY-01: an exception the mail triggers must never become 503 analyzer_unavailable.
     async def behaviour(reader, writer):
         await _read_job(reader)
         writer.write(ipc.encode({"t": "error", "kind": "internal", "stage": "analyze", "error_class": "KeyError"}))
+        await writer.drain()
+
+    status, resp = run_with(tmp_path, behaviour)
+    assert status == 200 and "MIME_MALFORMED" in {s["id"] for s in resp["signals"]}
+
+
+def test_worker_sandbox_failure_is_unavailable(tmp_path):
+    async def behaviour(reader, writer):
+        await _read_job(reader)
+        writer.write(ipc.encode({"t": "error", "kind": "sandbox", "stage": "sandbox", "error_class": "SandboxError"}))
         await writer.drain()
 
     with pytest.raises(Unavailable):

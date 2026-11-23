@@ -3,6 +3,11 @@
 Results: `pass`, `fail` (cryptographic or body-hash mismatch) or `unverifiable` (no key, DNS error,
 revoked/rotated key, expired signature, rsa-sha1, RSA keys under 1024 bits, unsupported parameters).
 Keys are fetched by the caller (the supervisor brokers DNS); this module is pure.
+
+A signature covers the bottom-most instances of the header fields it lists (RFC 6376 §5.4.2). When the
+message has more instances of a signed field that the reader is shown (From, Sender, Reply-To, Subject, To,
+Cc) than `h=` lists, the top-most, displayed instance is unsigned; a passing signature is then reported as
+`unverifiable` (reason `unsigned_instances`, RFC 6376 §8.15; security review PY-13).
 """
 
 from __future__ import annotations
@@ -21,8 +26,9 @@ from . import rawmail
 from .domains import normalize_domain
 
 MAX_SIGNATURES_PARSED = 10
+DISPLAYED_FIELDS = ("from", "sender", "reply-to", "subject", "to", "cc")
 _WSP_RUN = re.compile(rb"[ \t]+")
-_TAG_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_TAG_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 
 
 @dataclass
@@ -69,7 +75,7 @@ def parse_tag_list(value: str) -> dict[str, str] | None:
             return None
         name, val = item.split("=", 1)
         name = name.strip()
-        if not _TAG_NAME.match(name) or name in tags:
+        if not _TAG_NAME.fullmatch(name) or name in tags:
             return None
         tags[name] = val.strip()
     return tags
@@ -148,6 +154,15 @@ def _strip_b_value(raw: bytes) -> bytes:
         pos = m.end(3)
     out += value[pos:]
     return name + colon + bytes(out)
+
+
+def unsigned_instances(headers: list[rawmail.RawHeader], signed: list[str]) -> bool:
+    """True when a displayed field that `h=` lists occurs more often in the message than `h=` lists it."""
+    for name in DISPLAYED_FIELDS:
+        listed = signed.count(name)
+        if listed and sum(1 for h in headers if h.lname == name) > listed:
+            return True
+    return False
 
 
 def _select_headers(headers: list[rawmail.RawHeader], names: list[str], exclude: rawmail.RawHeader) -> list[bytes]:
@@ -273,6 +288,9 @@ def verify(sig: Signature, headers: list[rawmail.RawHeader], body: bytes, txt_re
         return res
     except (ValueError, TypeError):
         res.reason = "key_format"
+        return res
+    if unsigned_instances(headers, sig.h):
+        res.reason = "unsigned_instances"
         return res
     res.result, res.reason = "pass", ""
     return res

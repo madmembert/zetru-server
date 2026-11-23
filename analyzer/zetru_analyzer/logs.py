@@ -17,8 +17,8 @@ _ALLOWED_FIELDS = frozenset({
     "event", "stage", "error_class", "status", "endpoint", "tenant", "duration_bucket", "size_bucket",
     "workers", "queue", "feed", "feed_status", "reason", "pid_role", "count", "arch", "backend",
 })
-_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.:\-/]{0,64}$")
-_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_SAFE_VALUE = re.compile(r"[A-Za-z0-9_.:\-/]{0,64}")
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def _clean(key: str, value):
@@ -29,8 +29,8 @@ def _clean(key: str, value):
     if not isinstance(value, str):
         return "?"
     if key == "tenant":
-        return value if _UUID.match(value) else "invalid"
-    return value if _SAFE_VALUE.match(value) else "redacted"
+        return value if _UUID.fullmatch(value) else "invalid"
+    return value if _SAFE_VALUE.fullmatch(value) else "redacted"
 
 
 def log(level: str, event: str, **fields) -> None:

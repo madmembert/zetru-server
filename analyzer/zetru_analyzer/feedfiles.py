@@ -12,8 +12,8 @@ import os
 import re
 from dataclasses import dataclass
 
-_FEED_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
-_REL_PATH = re.compile(r"^[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,64}$")
+_FEED_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
+_REL_PATH = re.compile(r"[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,64}")
 MAX_CURRENT_JSON = 16_384
 
 
@@ -32,7 +32,7 @@ class FeedInfo:
 
 
 def read_current(feeds_dir: str, feed_id: str, verify_hash: bool = True) -> FeedInfo | None:
-    if not _FEED_ID.match(feed_id):
+    if not _FEED_ID.fullmatch(feed_id):
         return None
     feed_dir = os.path.join(feeds_dir, feed_id)
     try:
@@ -42,7 +42,7 @@ def read_current(feeds_dir: str, feed_id: str, verify_hash: bool = True) -> Feed
             return None
         doc = json.loads(raw)
         rel = doc["path"]
-        if not isinstance(rel, str) or not _REL_PATH.match(rel) or ".." in rel.split("/"):
+        if not isinstance(rel, str) or not _REL_PATH.fullmatch(rel) or ".." in rel.split("/"):
             return None
         info = FeedInfo(
             feed_id=feed_id,
@@ -67,11 +67,21 @@ def read_current(feeds_dir: str, feed_id: str, verify_hash: bool = True) -> Feed
 
 
 def sha256_file(path: str) -> str:
+    out = ""
+    for out in sha256_file_steps(path):
+        pass
+    return out
+
+
+def sha256_file_steps(path: str):
+    """Hashes in 1 MiB steps; yields "" after each step and the hex digest last (lets the supervisor's event
+    loop run in between, PY-22)."""
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+            yield ""
+    yield digest.hexdigest()
 
 
 def current_mtime(feeds_dir: str, feed_id: str) -> float | None:

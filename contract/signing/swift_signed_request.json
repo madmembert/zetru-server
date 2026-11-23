@@ -1,10 +1,12 @@
 {
+  "binding" : "a65eccb23dc2b86a476900cd343a85b8bb10c2a5064066fbee0280f38e9d99ec",
   "body_b64" : "AAAAvnsiYWNjb3VudF9yZWYiOiJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsImNhdGFsb2dfdmVyc2lvbiI6MSwibG9jYWxlIjoiZGUiLCJtYWlsX3NoYTI1NiI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJtb2RlIjoiYXV0byIsInNjaGVtYSI6MX1Gcm9tOiBhQGIuZGUNClN1YmplY3Q6IFRlc3QNCg0KSGFsbG8=",
   "content_sha256" : "0d221bf92c224bbe3a48a61a654534735277b114d88385d33b5b283b311a2709",
+  "device" : "6f1c2d3e-4a5b-4c6d-8e7f-8091a2b3c4d5",
   "method" : "POST",
   "nonce" : "j0J6a5unelTgc8PLi6an0w",
   "path" : "\/v1\/analyze",
-  "public_key" : "BParCOydprIxg72FXSN1DWToOzkG1dalfXUKPWieIZrufdOpHuzK+9ALQFXhPsISvA2K2oKS5GU1vF2p0VFJ7kA=",
-  "signature" : "MEYCIQCo36p2OcR7AdouCWG68\/0KcZwwA8Xve3eQEGzuvgHmbwIhAJJT4amW\/u8YXENIaWZbxcppeAhRZaH188MNQmKsdtwC",
+  "public_key" : "BAYpVWkmm4kTxjeZVa45ym4NFQO8LRX9si0qr8znw724WW+voRECZLDqU6dLmujZyIqKM2\/wJa8xW4ktGi2QseQ=",
+  "signature" : "MEQCIDh1jwWh+C2DHkqMgCgiN8ufjiIbuoMi9UHwjcPzbXrzAiANveLLupEfLo9YQJpkFuvKtzjuYqUQ33QwYX5xEBEGQA==",
   "timestamp" : "1800000000"
 }

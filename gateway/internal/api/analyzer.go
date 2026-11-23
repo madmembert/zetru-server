@@ -36,6 +36,10 @@ type analyzeMeta struct {
 	OCRText        *string  `json:"ocr_text"`
 }
 
+// metaKeys are the meta fields the gateway reads; a case variant of one of them is refused.
+var metaKeys = []string{"schema", "mail_sha256", "account_ref", "received_at", "mode", "locale",
+	"catalog_version", "qr_payloads", "ocr_text"}
+
 func contentTypeIs(header, want string) bool {
 	mt, _, err := mime.ParseMediaType(header)
 	return err == nil && mt == want
@@ -58,7 +62,8 @@ func parseAnalyzeBody(body []byte, maxMail int) (analyzeMeta, string) {
 	if len(mail) > maxMail {
 		return meta, "mail_too_large"
 	}
-	if !utf8.Valid(metaBytes) || !decodeJSON(metaBytes, &meta) {
+	// Strict: the analyzer reads these bytes again with a case-sensitive parser (GO-07).
+	if !utf8.Valid(metaBytes) || !decodeStrict(metaBytes, &meta, metaKeys...) {
 		return meta, "bad_request"
 	}
 	switch {
@@ -97,11 +102,15 @@ func policyHeader(e effectiveLimits) string {
 }
 
 // analyzerError maps a non-200 analyzer answer or a transport failure to an API response and
-// reports whether the quota unit should be refunded (the mail was not analysed).
+// reports whether the quota unit should be refunded: only when the analyzer refused the mail or
+// could not be reached, never when the call was cancelled (GO-04).
 func analyzerError(ctx context.Context, status int, retryAfter string, err error) (response, bool) {
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			return errorResponse("analysis_timeout"), false
+		case errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled):
+			return errorResponse("analyzer_unavailable"), false
 		}
 		return errorResponse("analyzer_unavailable"), true
 	}
@@ -150,12 +159,23 @@ type signalHead struct {
 	Severity string `json:"fallback_severity"`
 }
 
-func validSignal(raw json.RawMessage) (signalHead, bool) {
+// validSignal checks one analyzer signal strictly (exact keys "id" and "fallback_severity", no
+// duplicate or case-variant keys) and returns it re-encoded from what was validated (GO-07).
+func validSignal(raw json.RawMessage) (signalHead, json.RawMessage, bool) {
 	var h signalHead
-	if json.Unmarshal(raw, &h) != nil || !signalID.MatchString(h.ID) {
-		return h, false
+	obj, err := strictObject(raw)
+	if err != nil || !exactKeys(obj, "id", "fallback_severity") ||
+		json.Unmarshal(obj["id"], &h.ID) != nil || json.Unmarshal(obj["fallback_severity"], &h.Severity) != nil {
+		return h, nil, false
 	}
-	return h, h.Severity == "info" || h.Severity == "caution" || h.Severity == "danger"
+	if !signalID.MatchString(h.ID) || (h.Severity != "info" && h.Severity != "caution" && h.Severity != "danger") {
+		return h, nil, false
+	}
+	canonical, err := json.Marshal(obj)
+	if err != nil {
+		return h, nil, false
+	}
+	return h, canonical, true
 }
 
 type fingerprintOut struct {
@@ -174,8 +194,11 @@ const maxSignals = 64
 
 var severityRank = map[string]int{"info": 0, "caution": 1, "danger": 2}
 
+// forwardAnalyze sends the mail to the analyzer. The call is detached from the client's request
+// context: a client that disconnects once its body is uploaded neither cancels the analysis nor
+// gets its quota unit back nor skips the counter update (GO-04). The gateway's own timeout applies.
 func (s *Server) forwardAnalyze(r *http.Request, a *authed, e effectiveLimits, meta analyzeMeta) (response, bool) {
-	ctx, cancel := context.WithTimeout(r.Context(), s.opt.AnalyzeTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.opt.AnalyzeTimeout)
 	defer cancel()
 	status, retryAfter, data, err := s.post(ctx, "/internal/v1/analyze", AnalyzeContentType, a.body, a.tenant.ID, e)
 	if err != nil || status != http.StatusOK {
@@ -195,9 +218,9 @@ func (s *Server) forwardAnalyze(r *http.Request, a *authed, e effectiveLimits, m
 // mergeAnalysis checks the analyzer's response, replaces campaign_bands by the keyed fingerprint,
 // adds BULK_CAMPAIGN_* signals and returns the final JSON. reason is a fixed string on failure.
 func (s *Server) mergeAnalysis(data []byte, a *authed, e effectiveLimits, mailSHA256 string) ([]byte, string) {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(data, &obj); err != nil || obj == nil {
-		return nil, "not a JSON object"
+	obj, err := strictObject(data)
+	if err != nil || !exactKeys(obj, "schema", "mail_sha256", "signals", "campaign_bands", "fingerprint") {
+		return nil, "not a strict JSON object"
 	}
 	var schema int
 	if json.Unmarshal(obj["schema"], &schema) != nil || schema != 1 {
@@ -214,14 +237,14 @@ func (s *Server) mergeAnalysis(data []byte, a *authed, e effectiveLimits, mailSH
 	kept := make([]json.RawMessage, 0, len(signals)+1)
 	severities := make([]string, 0, len(signals)+1)
 	for _, raw := range signals {
-		h, ok := validSignal(raw)
+		h, canonical, ok := validSignal(raw)
 		if !ok {
 			return nil, "invalid signal"
 		}
 		if strings.HasPrefix(h.ID, "BULK_CAMPAIGN_") {
 			continue // campaign signals are the gateway's (internal spec)
 		}
-		kept = append(kept, raw)
+		kept = append(kept, canonical)
 		severities = append(severities, h.Severity)
 	}
 	if len(kept) > maxSignals {
@@ -254,7 +277,6 @@ func (s *Server) mergeAnalysis(data []byte, a *authed, e effectiveLimits, mailSH
 			}
 		}
 	}
-	var err error
 	if obj["fingerprint"], err = json.Marshal(fingerprint); err != nil {
 		return nil, "encode"
 	}
@@ -288,13 +310,70 @@ func addSignal(list []json.RawMessage, severities []string, sig json.RawMessage,
 
 // --- url check forwarding ---
 
+type urlCheckResult struct {
+	URLSHA256 string          `json:"url_sha256"`
+	Hit       bool            `json:"hit"`
+	Signal    json.RawMessage `json:"signal"` // nil encodes as null
+}
+
 type urlCheckResponse struct {
-	Results []struct {
-		URLSHA256 string           `json:"url_sha256"`
-		Hit       *bool            `json:"hit"`
-		Signal    *json.RawMessage `json:"signal"`
-	} `json:"results"`
-	Feeds []feedState `json:"feeds"`
+	Results []urlCheckResult `json:"results"`
+	Feeds   []feedState      `json:"feeds"`
+}
+
+// parseURLCheck validates the analyzer's url/check answer strictly and returns the response the
+// gateway signs, built from the validated values (GO-07): no analyzer byte is forwarded unchecked.
+func parseURLCheck(data []byte, req urlCheckRequest) (urlCheckResponse, bool) {
+	out := urlCheckResponse{Results: []urlCheckResult{}, Feeds: []feedState{}}
+	top, err := strictObject(data)
+	if err != nil || !exactKeys(top, "results", "feeds") {
+		return out, false
+	}
+	var results []json.RawMessage
+	if json.Unmarshal(top["results"], &results) != nil || results == nil || len(results) > len(req.Items) {
+		return out, false
+	}
+	asked := map[string]bool{}
+	for _, it := range req.Items {
+		asked[it.URLSHA256] = true
+	}
+	for _, raw := range results {
+		obj, err := strictObject(raw)
+		if err != nil || !exactKeys(obj, "url_sha256", "hit", "signal") {
+			return out, false
+		}
+		var res urlCheckResult
+		var hit *bool
+		if json.Unmarshal(obj["url_sha256"], &res.URLSHA256) != nil || !asked[res.URLSHA256] ||
+			json.Unmarshal(obj["hit"], &hit) != nil || hit == nil {
+			return out, false
+		}
+		res.Hit = *hit
+		if sig, ok := obj["signal"]; ok && string(sig) != "null" {
+			_, canonical, ok := validSignal(sig)
+			if !ok {
+				return out, false
+			}
+			res.Signal = canonical
+		}
+		out.Results = append(out.Results, res)
+	}
+	if raw, ok := top["feeds"]; ok && string(raw) != "null" {
+		var feeds []json.RawMessage
+		if json.Unmarshal(raw, &feeds) != nil {
+			return out, false
+		}
+		for _, f := range feeds {
+			var fs feedState
+			if !decodeStrict(f, &fs, "id", "age_s", "stale") || !shortID.MatchString(fs.ID) || fs.AgeS < 0 {
+				return out, false
+			}
+			if len(out.Feeds) < 64 {
+				out.Feeds = append(out.Feeds, fs)
+			}
+		}
+	}
+	return out, true
 }
 
 func (s *Server) forwardURLCheck(r *http.Request, a *authed, req urlCheckRequest) response {
@@ -307,32 +386,17 @@ func (s *Server) forwardURLCheck(r *http.Request, a *authed, req urlCheckRequest
 		resp, _ := analyzerError(ctx, status, retryAfter, err)
 		return resp
 	}
-	var check urlCheckResponse
-	if !decodeJSON(data, &check) || check.Results == nil || len(check.Results) > len(req.Items) || len(data) > MaxResponseBytes {
+	check, ok := parseURLCheck(data, req)
+	if !ok {
 		s.opt.ErrorLog.Error("analyzer url/check response rejected", "class", "analyzer_contract")
 		return errorResponse("analyzer_unavailable")
 	}
-	asked := map[string]bool{}
-	for _, it := range req.Items {
-		asked[it.URLSHA256] = true
-	}
-	for _, res := range check.Results {
-		if !asked[res.URLSHA256] || res.Hit == nil {
-			s.opt.ErrorLog.Error("analyzer url/check response rejected", "class", "analyzer_contract")
-			return errorResponse("analyzer_unavailable")
-		}
-		if res.Signal != nil && string(*res.Signal) != "null" {
-			if _, ok := validSignal(*res.Signal); !ok {
-				s.opt.ErrorLog.Error("analyzer url/check response rejected", "class", "analyzer_contract")
-				return errorResponse("analyzer_unavailable")
-			}
-		}
-	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, data); err != nil {
+	out, err := json.Marshal(check)
+	if err != nil || len(out) > MaxResponseBytes {
+		s.opt.ErrorLog.Error("analyzer url/check response rejected", "class", "analyzer_contract")
 		return errorResponse("analyzer_unavailable")
 	}
-	return response{status: http.StatusOK, body: compact.Bytes()}
+	return response{status: http.StatusOK, body: out}
 }
 
 // --- analyzer health (for server/info) ---

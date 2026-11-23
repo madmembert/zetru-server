@@ -111,8 +111,9 @@ type Quota struct {
 	dirty  bool
 }
 
-// OpenQuota loads the quota file at path (empty if missing). A corrupt file is moved aside and
-// counting restarts, because quota counters are not security state.
+// OpenQuota loads the quota file at path (empty if missing). A corrupt file is deleted and
+// counting restarts, because quota counters are not security state; a moved-aside copy would
+// outlive the 2-day retention of §14.2.
 func OpenQuota(path string, now func() time.Time) (*Quota, error) {
 	if now == nil {
 		now = time.Now
@@ -121,6 +122,7 @@ func OpenQuota(path string, now func() time.Time) (*Quota, error) {
 	if path == "" {
 		return q, nil
 	}
+	_ = fsutil.RemoveIfExists(path + ".corrupt") // left behind by earlier versions
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return q, nil
@@ -129,7 +131,9 @@ func OpenQuota(path string, now func() time.Time) (*Quota, error) {
 		return nil, err
 	}
 	if err := json.Unmarshal(data, &q.counts); err != nil || q.counts == nil {
-		_ = os.Rename(path, path+".corrupt")
+		if err := fsutil.RemoveIfExists(path); err != nil {
+			return nil, err
+		}
 		q.counts = map[string]map[string]int{}
 	}
 	q.pruneLocked(now())

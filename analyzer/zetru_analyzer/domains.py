@@ -11,7 +11,7 @@ import os
 import re
 from dataclasses import dataclass
 
-_LABEL_RE = re.compile(r"^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$")
+_LABEL_RE = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
 _ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍⁠﻿­"), None)
 BUNDLED_PSL = os.path.join(os.path.dirname(__file__), "data", "public_suffix_list.dat")
 
@@ -47,7 +47,7 @@ def normalize_domain(value: str | None) -> str | None:
         if not label:
             return None
         ascii_label = _label_to_ascii(label)
-        if ascii_label is None or not _LABEL_RE.match(ascii_label):
+        if ascii_label is None or not _LABEL_RE.fullmatch(ascii_label):
             return None
         out.append(ascii_label)
     result = ".".join(out)

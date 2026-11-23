@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+
+
+class DeadlineExceeded(Exception):
+    """A backend ran out of the time the router gave it (the router then falls back or abstains)."""
 
 
 @dataclass
@@ -45,9 +50,21 @@ class Backend:
     def answer(self, state: str, questions: list[dict], language_hint: str | None) -> dict[str, Answer]:
         raise NotImplementedError
 
+    def answer_until(self, state: str, questions: list[dict], language_hint: str | None,
+                     deadline: float) -> dict[str, Answer]:
+        """`answer` bounded by `deadline` (time.monotonic()). Backends that can stop early override this; the
+        default refuses to start once the deadline has passed."""
+        if time.monotonic() >= deadline:
+            raise DeadlineExceeded()
+        return self.answer(state, questions, language_hint)
+
     def health(self) -> dict:
         return {"id": self.id, "enabled": self.enabled(), "calibrated": self.calibrated,
                 "licence_notice": self.licence_notice}
+
+
+def remaining(deadline: float) -> float:
+    return deadline - time.monotonic()
 
 
 def abstain_answer(question: dict, backend: str, version: str, reason: str, calibrated: bool = False) -> Answer:

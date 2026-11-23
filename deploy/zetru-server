@@ -34,6 +34,9 @@ esac
 export COMPOSE_PROFILES="$profile"
 gateway="gateway-$profile"
 volume="zetru_gateway-data"
+# Pinned by digest (GO-06): this container reads the private keys during backup and restore.
+# deploy/pin-images.sh update refreshes it.
+alpine="alpine:3.22.8@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f"
 
 running() {
   docker compose ps --status running --services 2>/dev/null | grep -qx "$1"
@@ -56,10 +59,10 @@ case "$cmd" in
     # Keys, registry and configuration. Request logs and counters are left out on purpose
     # (retention 14 and 30 days, concept §14.2). The archive contains the server's private keys.
     if [ -t 1 ]; then echo "zetru-server: redirect the backup to a file" >&2; exit 2; fi
-    exec docker run --rm --network none --user 10001:10001 -v "$volume":/data:ro alpine:3.22 \
+    exec docker run --rm --network none --user 10001:10001 -v "$volume":/data:ro "$alpine" \
       tar czf - -C /data --exclude=./logs --exclude=./state --exclude=./.registry.lock --exclude=./.keys.lock . ;;
   restore)
     if running "$gateway"; then echo "zetru-server: stop the server first (./zetru-server down)" >&2; exit 2; fi
-    exec docker run --rm -i --network none --user 10001:10001 -v "$volume":/data alpine:3.22 tar xzf - -C /data ;;
+    exec docker run --rm -i --network none --user 10001:10001 -v "$volume":/data "$alpine" tar xzf - -C /data ;;
   *) usage >&2; exit 2 ;;
 esac

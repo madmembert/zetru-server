@@ -64,9 +64,9 @@ def test_x32_abi_is_killed_on_x86_64():
 
 
 def test_numbers_do_not_collide_with_allowed_basics():
-    # aarch64 'socket' (198) is an unrelated syscall on x86_64 and must stay allowed there.
+    # aarch64 'connect' (203) is sched_setaffinity on x86_64 and must stay allowed there.
     prog = sandbox.build_filter("x86_64")
-    assert sandbox.run_filter(prog, 198, sandbox.AUDIT_ARCH_X86_64) == ALLOW
+    assert sandbox.run_filter(prog, 203, sandbox.AUDIT_ARCH_X86_64) == ALLOW
     for arch in ("x86_64", "aarch64"):
         assert len(sandbox.build_filter(arch)) < 255
 
@@ -96,6 +96,11 @@ def test_real_sandbox_in_forked_child(tmp_path):
                 lambda: open(tmp_path / "new.txt", "w"),
                 lambda: os.execv("/bin/true", ["true"]),
                 lambda: os.fork(),
+                lambda: os.kill(os.getppid(), 0),          # PY-08: no signals to the zygote or supervisor
+                lambda: os.mkdir(tmp_path / "dir"),          # PY-08: nothing left behind for later workers
+                lambda: os.symlink("x", tmp_path / "link"),
+                lambda: os.unlink(read_path),
+                lambda: os.memfd_create("x"),
             ):
                 try:
                     action()
@@ -111,4 +116,4 @@ def test_real_sandbox_in_forked_child(tmp_path):
     os.close(w)
     data = os.read(r, 1000).decode()
     os.waitpid(pid, 0)
-    assert data == "hardened,denied,denied,denied,denied,ok"
+    assert data == "hardened," + ",".join(["denied"] * 9) + ",ok"

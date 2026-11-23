@@ -15,16 +15,19 @@ without alarm". Items marked **deviation** differ from the letter of the concept
    reported; a wrong architecture or the x32 ABI kills the process. In addition to the concept's list the filter
    blocks `socketpair`, `bind`, `listen`, `accept*`, `execveat`, `process_vm_readv/writev`, the new mount API,
    `umount2`, `io_uring_*` (would bypass per-syscall filtering), `creat` and `openat2` (its flags are in a struct
-   BPF cannot read). `PR_SET_DUMPABLE 0` and `PR_SET_PDEATHSIG` are set too.
+   BPF cannot read), and since the security review (S6) every signal syscall, process creation, file-system changes,
+   SysV/POSIX IPC, keyrings, memfd, bpf and `prctl`. `PR_SET_DUMPABLE 0` and `PR_SET_PDEATHSIG` are set too.
 4. **On Linux the sandbox is mandatory**: if any step fails the worker reports `sandbox` and the request gets
    `503 analyzer_unavailable`. `ZETRU_SANDBOX=off` exists for local development only. On other platforms the
    sandbox is skipped with a logged warning.
-5. **Outcome mapping**: wall-clock kill (15 s) or `SIGXCPU` → `504 analysis_timeout`; `MemoryError`,
-   `RecursionError`, a crash without a result or a result failing schema validation → `200` with
-   `parse: failed` and `MIME_MALFORMED` + `MIME_LIMITS` (a mail that exhausts the sandbox is suspicious and must
-   not lift the device's "not analysed" cap without a finding); an internal exception (a bug) or sandbox failure
-   → `503 analyzer_unavailable` with Retry-After 900, so the app keeps the mail at "not analysed" instead of
-   presenting an incomplete analysis.
+5. **Outcome mapping** (changed by the security review, S1): everything a mail can make a worker do — an
+   exception, `MemoryError`, `RecursionError`, a wall-clock kill (15 s), `SIGXCPU`, a crash without a result or a
+   result failing schema validation — is answered `200` with `parse: failed` and `MIME_MALFORMED` + `MIME_LIMITS`
+   (a mail that exhausts the sandbox is suspicious and must not lift the device's "not analysed" cap without a
+   finding; §11.6: an unparseable mail is not an error). Only a sandbox failure is `503 analyzer_unavailable`
+   (Retry-After 900), and only the supervisor's own 20 s deadline (queue wait included) is `504 analysis_timeout`.
+   Previously a content-triggered exception gave 503 and a CPU-heavy mail 504, which let a sender keep the server
+   away from their mail for good.
 6. **DNS name policy**: only TXT names of the forms `_dmarc.<d>`, `<s>._domainkey.<d>` and `<d>` when
    `_dmarc.<d>` is in the same batch (DMARCbis `np` needs to know whether the From domain exists; TXT is the
    only allowed query type, NXDOMAIN on it answers that). Budget 25 names per mail; feed lookups 40; age lookups
@@ -142,9 +145,12 @@ without alarm". Items marked **deviation** differ from the letter of the concept
 34. Feed matching checks the host and every parent with ≥ 2 labels (CERT Polska recommends blocking subdomains);
     a listed child never makes its parent listed. Feeds are held as sorted 64-bit hashes in the supervisor.
 35. The never-list guard also protects the **disposable** list (a poisoned entry like `gmail.com` would mark every
-    Gmail sender). A release with more than max(10, 1 %) never-list hits is rejected as poisoned.
+    Gmail sender). A release with more than max(10, 1 %) never-list hits is rejected as poisoned. Since the
+    security review (S11) names of the static never-list protect their subdomains too, Majestic top-1,000 names
+    protect only themselves, and the analyzer applies the static rule again at lookup time.
 36. **Deviation**: staging of the normalised output happens on the feeds volume (`.tmp-<version>`) so the
-    publish rename is atomic; raw downloads are staged in the tmpfs (`ZETRU_STAGING_DIR`).
+    publish rename is atomic. Raw downloads are staged on the feeds volume too (`/feeds/.staging`,
+    `ZETRU_STAGING_DIR`), not in the tmpfs: tmpfs pages count against the container's 512 MB limit (S14).
 37. Majestic's "at most once per 24 h" counts every attempt, also failed or rejected ones.
 38. Truncated downloads are rejected (Content-Length check): `http.client` does not raise when a body with a
     declared length ends early.
@@ -158,3 +164,103 @@ without alarm". Items marked **deviation** differ from the letter of the concept
     required here. Non-root uids 10002/10003/10005, read-only root FS compatible (bytecode precompiled,
     `PYTHONDONTWRITEBYTECODE=1`). Pin the base image by digest for releases.
 41. Each service builds from its own directory (no shared `pylib`), matching the compose build contexts.
+
+## Security review of the Python services (findings PY-01 … PY-26)
+
+The review is in the session notes, not in the repository; the finding IDs are used in code comments. Guiding rule
+for every fix: a parsing problem may make a result *incomplete* or add a *caution*, never make a mail look better;
+one tenant's mail must not degrade service for others.
+
+S1. **Content never becomes an outage (PY-01, PY-05).** `pipeline.analyze` runs every stage under a guard: an
+    unexpected exception marks that stage `failed` (or `partial` for text-only stages), adds `MIME_MALFORMED` and
+    `MIME_LIMITS` and the other stages still run. The supervisor maps worker errors and CPU/wall-clock kills to the
+    `200` failure result (decision 5). A per-mail CPU budget of 6 s stops attachment inspection early
+    (`attachments: partial` + `MIME_LIMITS`), so most heavy mails still get their auth and link results.
+S2. **URL canonicalisation (PY-01).** A port must consist of ASCII digits; leading zeros are ignored and at most
+    five significant digits are allowed — exactly the rule of `LinkCanonicalizer.swift`. Fullwidth or
+    Arabic-Indic digits, which Python's `str.isdigit` accepted, are now rejected like the app rejects them. Input
+    containing a lone surrogate (only Python strings can hold one) is rejected as a whole, whatever part of the URL
+    it is in. Body text is decoded only with an allow-list of mail charsets; `punycode`, `idna`, `utf-7`,
+    `unicode_escape` and anything unknown are decoded as UTF-8 with replacement.
+S3. **Links (PY-02).** Every distinct host is kept; only URLs beyond 10 per host are skipped, which loses nothing
+    because every link check works per host or per domain. Redirector destinations count as their own host. More than
+    1,000 distinct URL candidates (or 500 URLs in plain text): `urls: partial` + `MIME_LIMITS` (1,000 hosts cost
+    about 0.5 s of CPU on a laptop, a few seconds on a Raspberry Pi). Feed lookups go to
+    QR/form/unwrapped links first, then visible links, hidden links, and ESP trackers/official brand hosts last; if
+    the 40 lookups or the 5 link-domain age lookups do not cover everything, `urls` is `partial` (domain-age
+    `partial` alone still counts as complete, so `urls` carries the incompleteness). No `MIME_LIMITS` for budget
+    overflow: many link domains are normal for newsletters and must not raise a caution.
+S4. **Canonical state size (PY-03).** Tokens are cut at 64 characters, controls and bidi/zero-width characters are
+    removed and lone surrogates replaced; a state stays below ~36,000 characters, well inside the 64 KiB the
+    supervisor and inference accept. The supervisor cuts an oversized state instead of refusing it. The analyzer
+    sends JSON to inference as UTF-8 (escaped non-ASCII text could exceed the body limit), and inference accepts
+    bodies up to 1 MiB.
+S5. **Rule-tier evasion and cost (PY-03, PY-04, PY-16).** The two quadratic amount patterns are anchored
+    (`(?<!\d)\d{1,9}…`); every pattern of a pack is timed against adversarial strings when the pack is loaded and
+    a slow one stops the service from starting (rule packs are `rules-1.1.0` now). Text whose overall stop-word
+    ratio is below 8 % (padding with foreign or nonsense words) is evaluated against the language of its densest
+    40-token window; only strong findings are reported then, all other answers stay `unsupported_language`
+    (rules only ever raise risk). A `suppress` pattern now cancels only matches it overlaps, so an injected
+    "(newsletter)" no longer silences a credential request; the two callback suppressors were widened to the end of
+    their clause so "Bei Fragen erreichen Sie uns unter …" stays neutral. Residual: a sender who writes the request
+    *inside* a suppressor's phrase (e.g. starts the callback sentence with "If you have questions,") still
+    suppresses it — inherent to suppression lists.
+S6. **Sandbox (PY-07, PY-08).** Supervisor and zygote set `PR_SET_DUMPABLE 0` (their `/proc/<pid>` files then
+    belong to root, so a compromised worker of the same uid cannot open `/proc/1/mem`, whatever the host's Yama
+    setting). The supervisor ignores SIGINT (inherited by the zygote). The seccomp filter stays a **deny-list**,
+    extended to signals, process creation, file-system changes, persistent IPC objects and `prctl`; an allow-list
+    needs a traced run of the corpus on Linux/x86_64 and aarch64, which the macOS development setup cannot do — a
+    wrong allow-list would make every worker fail. Converting is the recommended next step. A zygote that leaves two
+    spawns in a row unanswered counts as dead and is replaced by the maintenance loop; `/internal/healthz` answers
+    503 then, so the container health check sees it.
+S7. **Attachments (PY-05, PY-09, PY-10, PY-15).** Each sub-analysis runs separately; an expected parse failure
+    marks the report `partial`, an unexpected error also `failed`, which the pipeline reports as `MIME_LIMITS` with
+    the part path (a caution) — signals found before the failure are kept. PDF names are found with literal searches
+    plus a bounded pass over `#xx` escapes (at most 20,000 per buffer, else `partial`); stream inflation is bounded by
+    output (16 MB), compressed input (64 MB, overlapping streams count again) and 2,000 streams (`partial` when
+    hit). The ZIP end record is the outermost one whose comment reaches the end of the file; local headers that no
+    listed entry covers make the archive opaque; unrecognised content with an archive extension or a ZIP end record
+    is listed as ZIP, or reported opaque. OOXML macros are also found through `[Content_Types].xml` (VBA, macro-
+    enabled and macro-sheet types) and through macro-enabled extensions (`docm`, `xlsm`, …).
+S8. **DNS answers (PY-06).** TXT records are reduced to printable ASCII, at most 8 records of 2,048 characters per
+    name; a broker reply is capped at 512 KiB (largest DNS answers become errors) and the worker accepts replies up to
+    that size; a worker that goes away while the supervisor writes still gets an answer for its mail.
+S9. **Multiple From fields (PY-13).** A mail with other than exactly one From field and one mailbox gets
+    `MIME_MALFORMED`, no aligned signature, DMARC result `fail` (without an `AUTH_DMARC_FAIL_*` signal: the
+    published policy says nothing about such a message) and `[AUTH] fail` in the state. A DKIM signature whose `h=`
+    lists a displayed field (From, Sender, Reply-To, Subject, To, Cc) fewer times than the message contains it is
+    `unverifiable` (`unsigned_instances`).
+S10. **Optional inference tiers (PY-12, PY-24, PY-26).** One deadline per request (6 s, analyzer waits 8 s); `llm`,
+    `openjev` and `jev` run in parallel on a 4-thread pool; any failure or late answer of an optional tier is
+    ignored and the rule answers are returned; a failing encoder falls back to rules. The server handles at most
+    8 requests at once (`ZETRU_INFERENCE_CONCURRENCY`) and answers 503 beyond that. Encoder: logits clamped, stable
+    sigmoid, temperatures clamped to 0.05–100, release files must stay inside the release directory, and answers
+    carry `state_truncated_over_50pct` when more of the state falls behind the 512-token window than inside it. The
+    analyzer does **not** flag its own state-1 window (head 250 + tail 80 tokens): that window is the defined
+    classifier input (§9.2), and the app counts every `abstain` value as an abstention. Remote backends (`remote =
+    True`) need HTTPS unless the host is loopback.
+S11. **Never-list (PY-11, PY-25).** See decision 35. Unguarded feeds (PSL, Majestic) are processed before guarded
+    ones in every pass, so the first certpl release on a fresh volume is filtered with the Majestic top 1,000 when
+    Majestic is reachable; if it is not, the static never-list still applies and the next run (5 min) re-filters.
+S12. **Drain protection (PY-18).** Besides the previous release, a reference release is kept (`reference.json`, not
+    pruned) and moves to the newest release once it is 24 h old; a release may not remove more than 50 % (or add more
+    than 300 %) relative to either. A compromised source can therefore halve a list at most about once a day.
+    `min_entries` of certpl (1,000) is unchanged: raising it needs the list's real size, which was not measured.
+S13. **HTTP and IPC limits (PY-17, PY-19, PY-20, PY-21, PY-23).** `HARD_MAX_MAIL` is 20 MiB (the gateway's cap) and
+    the worker's job-frame limit is derived from it. Analyze requests are admitted before the body is read; bodies
+    being read count against workers + queue; at most 2 × capacity + 16 connections. POST endpoints need a valid
+    tenant UUID; chunk sizes are 1–8 hex digits. Validators use `fullmatch` (a `$` accepted a trailing newline).
+    A worker gets at most four broker round trips.
+S14. **Supervisor blocking (PY-22).** Feeds are hashed, parsed and sorted in steps with `await asyncio.sleep(0)`
+    between them; host names are still resolved synchronously (decision 7: no threads), but a failed resolution is
+    cached for 5 s and a known address kept for 5 minutes while resolution fails; the resolver's address is looked up
+    again after three consecutive timeouts. Updater: the attempt time is saved before a download starts, so a run
+    killed for memory cannot loop; the previous release is compared as a sorted array of 64-bit hashes.
+
+S15. **URL canonicalisation is a shared contract (concept §11.4).** `contract/url-canonicalization.json` holds 110
+    inputs with the canonical form both sides must produce; `analyzer/tests/test_contract_vectors.py` checks this
+    implementation, the app's LinkCanonicalizer test checks the same file. The first run found two old differences:
+    IPv6 hosts were serialised with `str(ipaddress.IPv6Address)`, which prints IPv4-mapped addresses dotted from
+    Python 3.13 on (`[::ffff:1.2.3.4]`) and hex before (`[::ffff:102:304]`), so `url_sha256` depended on the Python
+    version of the machine; and zone IDs (`[fe80::1%25eth0]`) were accepted. `format_ipv6` now serialises like the
+    app and WHATWG (hex pieces, first longest zero run compressed), and zone IDs are rejected.

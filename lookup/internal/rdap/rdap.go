@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -283,21 +284,47 @@ func (l *HostLimiter) BackOff(host string, d time.Duration) {
 	l.mu.Unlock()
 }
 
-// publicIP reports whether ip is a globally routable unicast address.
-func publicIP(ip net.IP) bool {
-	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsInterfaceLocalMulticast() {
+// nonPublic lists the special-purpose ranges a registry server can never legitimately use
+// (IANA IPv4 and IPv6 special-purpose address registries). IPv4-mapped IPv6 addresses are unmapped
+// and checked as IPv4; IPv6 must also lie in the global unicast block 2000::/3.
+var nonPublic = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, p := range []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+		"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+		"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+		"64:ff9b::/96",   // NAT64: reaches IPv4 behind the translator
+		"64:ff9b:1::/48", // local-use NAT64
+		"100::/64",       // discard-only
+		"2001::/23",      // IETF protocol assignments, incl. Teredo 2001::/32
+		"2001:db8::/32",  // documentation
+		"2002::/16",      // 6to4: embeds an IPv4 address
+		"3fff::/20",      // documentation
+		"5f00::/16",      // SRv6 SIDs
+	} {
+		out = append(out, netip.MustParsePrefix(p))
+	}
+	return out
+}()
+
+var globalUnicast6 = netip.MustParsePrefix("2000::/3")
+
+// publicIP reports whether ip is a globally routable unicast address. Zone-scoped addresses are
+// refused; IPv4-mapped addresses are judged by their IPv4 address (GO-14).
+func publicIP(ip netip.Addr) bool {
+	if !ip.IsValid() || ip.Zone() != "" {
 		return false
 	}
-	if v4 := ip.To4(); v4 != nil {
-		// 0.0.0.0/8, 100.64.0.0/10 (CGNAT), 192.0.0.0/24, 198.18.0.0/15, 240.0.0.0/4
-		switch {
-		case v4[0] == 0, v4[0] == 100 && v4[1]&0xc0 == 64, v4[0] == 192 && v4[1] == 0 && v4[2] == 0,
-			v4[0] == 198 && v4[1]&0xfe == 18, v4[0] >= 240:
+	ip = ip.Unmap()
+	if ip.Is6() && !globalUnicast6.Contains(ip) {
+		return false // ::/8 (incl. IPv4-compatible ::/96), fc00::/7, fe80::/10, fec0::/10, ff00::/8, …
+	}
+	for _, p := range nonPublic {
+		if p.Contains(ip) {
 			return false
 		}
 	}
-	return true
+	return ip.IsGlobalUnicast()
 }
 
 // guardedDialControl refuses connections to anything but public addresses on port 443.
@@ -309,7 +336,8 @@ func guardedDialControl(_, address string, _ syscall.RawConn) error {
 	if port != "443" {
 		return errors.New("rdap: only port 443 is allowed")
 	}
-	if !publicIP(net.ParseIP(host)) {
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !publicIP(ip) {
 		return errors.New("rdap: refusing a non-public address")
 	}
 	return nil

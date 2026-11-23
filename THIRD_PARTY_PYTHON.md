@@ -33,7 +33,7 @@ Versions are to be pinned and re-checked when the first encoder model is release
 
 ## Feeds fetched at runtime (updater)
 
-See `server/updater/README.md`: Public Suffix List (MPL-2.0), IANA TLD list and RDAP bootstrap (IANA public data),
+See `updater/README.md`: Public Suffix List (MPL-2.0), IANA TLD list and RDAP bootstrap (IANA public data),
 CERT Polska Warning List (data usage policy: any use incl. commercial, attribution not required, no implied
 endorsement), Majestic Million (CC BY 3.0, attribution "Majestic Million by Majestic (majestic.com)"),
 disposable-email-domains (CC0).

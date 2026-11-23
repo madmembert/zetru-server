@@ -1,8 +1,8 @@
-# Zetru updater (concept §3.2, §6.7). Build context: server/updater
-#   docker build -t zetru/updater:1.0.0 server/updater
+# Zetru updater (concept §3.2, §6.7). Build context: updater
+#   docker build -t zetru/updater:1.0.0 updater
 # Standard library only. /feeds and /models are created here owned by uid 10005 so that fresh named
 # volumes inherit that ownership; everything it publishes is 0755/0644 (readable by uid 10002/10003).
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 
 FROM ${PYTHON_IMAGE} AS build
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     ZETRU_FEEDS_DIR=/feeds \
-    ZETRU_STAGING_DIR=/tmp/staging
+    ZETRU_STAGING_DIR=/feeds/.staging
 # ca-certificates ship with the python slim image (system trust store for HTTPS).
 RUN python -m pip uninstall -y pip setuptools wheel >/dev/null 2>&1 || true \
  && mkdir -p /feeds /models \

@@ -1,6 +1,7 @@
 package limits
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -85,5 +86,22 @@ func TestQuota(t *testing.T) {
 	_ = q2.Save()
 	if len(q2.counts) != 0 {
 		t.Fatalf("old days kept: %v", q2.counts)
+	}
+}
+
+// TestCorruptQuotaFileIsDeleted is the regression test for GO-17: no moved-aside copy may outlive
+// the 2-day retention of quota counters.
+func TestCorruptQuotaFileIsDeleted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quota.json")
+	_ = os.WriteFile(path, []byte("{broken"), 0o600)
+	_ = os.WriteFile(path+".corrupt", []byte("{}"), 0o600) // from an earlier version
+	q, err := OpenQuota(path, nil)
+	if err != nil || q.Count("x") != 0 {
+		t.Fatalf("open: %v", err)
+	}
+	for _, p := range []string{path, path + ".corrupt"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s kept", filepath.Base(p))
+		}
 	}
 }

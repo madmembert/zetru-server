@@ -1,7 +1,7 @@
-# Zetru inference (concept §3.2, §9). Build context: server/inference
-#   docker build -t zetru/inference:1.0.0 server/inference
+# Zetru inference (concept §3.2, §9). Build context: inference
+#   docker build -t zetru/inference:1.0.0 inference
 #   docker build --build-arg WITH_ENCODER=1 ...   (optional ONNX encoder runtime; off by default)
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 
 FROM ${PYTHON_IMAGE} AS build
 ARG WITH_ENCODER=0

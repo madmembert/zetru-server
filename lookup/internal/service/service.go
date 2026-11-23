@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,8 +27,13 @@ const (
 	ErrorTTL = 10 * time.Minute    // failed lookups are retried after this
 	// BootstrapMaxAge: a cached bootstrap older than this is not used.
 	BootstrapMaxAge = 30 * 24 * time.Hour
-	maxEntries      = 200_000
 	requestBudget   = 2800 * time.Millisecond // the caller gives up after 3 s
+
+	// Cache and concurrency bounds for a 128 MB container (GO-15). They hold at insert time, not
+	// only when the cache is saved.
+	DefaultMaxEntries    = 100_000
+	DefaultMaxKeyBytes   = 16 << 20 // bytes of domain names in the cache
+	DefaultMaxConcurrent = 32       // age lookups in progress; more get 503 busy
 )
 
 // Entry is a cached result: lookup-cache domain → {registered_on|null, fetched_at} (§13.2).
@@ -54,6 +60,10 @@ type Options struct {
 	BootstrapURL string
 	Now          func() time.Time
 	Log          *slog.Logger
+
+	MaxEntries    int // default DefaultMaxEntries
+	MaxKeyBytes   int // default DefaultMaxKeyBytes
+	MaxConcurrent int // default DefaultMaxConcurrent
 }
 
 // Service answers age lookups.
@@ -65,9 +75,12 @@ type Service struct {
 	bootstrap *rdap.Bootstrap
 	bfetched  time.Time
 
-	cmu     sync.Mutex
-	entries map[string]Entry
-	dirty   bool
+	cmu      sync.Mutex
+	entries  map[string]Entry
+	keyBytes int // sum of len(domain) over entries
+	dirty    bool
+
+	sem chan struct{} // bounds concurrent age lookups
 
 	fmu      sync.Mutex
 	inflight map[string]*call
@@ -89,13 +102,32 @@ func New(opt Options) (*Service, error) {
 	if opt.BootstrapURL == "" {
 		opt.BootstrapURL = rdap.BootstrapURL
 	}
-	s := &Service{opt: opt, entries: map[string]Entry{}, inflight: map[string]*call{}}
+	if opt.MaxEntries <= 0 {
+		opt.MaxEntries = DefaultMaxEntries
+	}
+	if opt.MaxKeyBytes <= 0 {
+		opt.MaxKeyBytes = DefaultMaxKeyBytes
+	}
+	if opt.MaxConcurrent <= 0 {
+		opt.MaxConcurrent = DefaultMaxConcurrent
+	}
+	s := &Service{opt: opt, entries: map[string]Entry{}, inflight: map[string]*call{}, sem: make(chan struct{}, opt.MaxConcurrent)}
 	s.client = &rdap.Client{HTTP: opt.HTTP, Limiter: opt.Limiter, MaxBody: 512 << 10, Now: opt.Now, KnownHosts: s.knownHost}
 	if opt.CacheDir != "" {
-		if data, err := os.ReadFile(filepath.Join(opt.CacheDir, "rdap-cache.json")); err == nil {
-			if json.Unmarshal(data, &s.entries) != nil {
-				s.entries = map[string]Entry{}
-				_ = os.Rename(filepath.Join(opt.CacheDir, "rdap-cache.json"), filepath.Join(opt.CacheDir, "rdap-cache.json.corrupt"))
+		path := filepath.Join(opt.CacheDir, "rdap-cache.json")
+		// A moved-aside copy from earlier versions holds queried domains beyond the 30-day
+		// retention of §14.2 (GO-17); a corrupt cache is deleted, not moved aside.
+		if err := os.Remove(path + ".corrupt"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if f, err := os.Open(path); err == nil {
+			err = s.load(bufio.NewReaderSize(f, 64<<10))
+			_ = f.Close()
+			if err != nil {
+				s.entries, s.keyBytes = map[string]Entry{}, 0
+				if err := os.Remove(path); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if data, err := os.ReadFile(filepath.Join(opt.CacheDir, "bootstrap.json")); err == nil {
@@ -167,7 +199,10 @@ func (s *Service) RefreshBootstrap(ctx context.Context) error {
 			FetchedAt int64           `json:"fetched_at"`
 			Data      json.RawMessage `json:"data"`
 		}{now.Unix(), data})
-		return writeAtomic(filepath.Join(s.opt.CacheDir, "bootstrap.json"), stored)
+		return writeAtomic(filepath.Join(s.opt.CacheDir, "bootstrap.json"), func(w *bufio.Writer) error {
+			_, err := w.Write(stored)
+			return err
+		})
 	}
 	return nil
 }
@@ -262,54 +297,138 @@ func (s *Service) resolve(ctx context.Context, domain string) Response {
 		}
 	}
 	s.cmu.Lock()
-	s.entries[domain] = Entry{RegisteredOn: resp.RegisteredOn, Status: resp.Status, FetchedAt: s.opt.Now().Unix()}
-	s.dirty = true
+	s.insertLocked(domain, Entry{RegisteredOn: resp.RegisteredOn, Status: resp.Status, FetchedAt: s.opt.Now().Unix()})
 	s.cmu.Unlock()
 	return resp
 }
 
-// prune drops expired entries and enforces the size cap (oldest first).
+// insertLocked adds or replaces an entry. A new entry that would exceed a cap first triggers a
+// prune, which drops expired entries and then the oldest down to 90 % of the caps; its O(n log n)
+// cost is spread over the inserts that the freed 10 % allow (GO-15).
+func (s *Service) insertLocked(domain string, e Entry) {
+	if _, ok := s.entries[domain]; !ok {
+		if len(s.entries)+1 > s.opt.MaxEntries || s.keyBytes+len(domain) > s.opt.MaxKeyBytes {
+			s.pruneLocked(true)
+		}
+		s.keyBytes += len(domain)
+	}
+	s.entries[domain] = e
+	s.dirty = true
+}
+
 func (s *Service) prune() {
 	s.cmu.Lock()
 	defer s.cmu.Unlock()
+	s.pruneLocked(false)
+}
+
+// pruneLocked drops expired entries and, when a cap is exceeded (or room is needed for one more
+// entry), the oldest entries down to 90 % of the caps.
+func (s *Service) pruneLocked(makeRoom bool) {
 	for d, e := range s.entries {
 		if !s.fresh(e) {
-			delete(s.entries, d)
-			s.dirty = true
+			s.deleteLocked(d)
 		}
 	}
-	if len(s.entries) > maxEntries {
-		type aged struct {
-			d string
-			f int64
+	slack := 0
+	if makeRoom {
+		slack = 1
+	}
+	if len(s.entries)+slack <= s.opt.MaxEntries && s.keyBytes+slack*253 <= s.opt.MaxKeyBytes {
+		return
+	}
+	type aged struct {
+		d string
+		f int64
+	}
+	all := make([]aged, 0, len(s.entries))
+	for d, e := range s.entries {
+		all = append(all, aged{d, e.FetchedAt})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].f < all[j].f })
+	for _, a := range all {
+		if len(s.entries) <= s.opt.MaxEntries*9/10 && s.keyBytes <= s.opt.MaxKeyBytes*9/10 {
+			break
 		}
-		all := make([]aged, 0, len(s.entries))
-		for d, e := range s.entries {
-			all = append(all, aged{d, e.FetchedAt})
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i].f < all[j].f })
-		for _, a := range all[:len(all)-maxEntries*9/10] {
-			delete(s.entries, a.d)
-		}
+		s.deleteLocked(a.d)
+	}
+}
+
+func (s *Service) deleteLocked(domain string) {
+	if _, ok := s.entries[domain]; ok {
+		delete(s.entries, domain)
+		s.keyBytes -= len(domain)
 		s.dirty = true
 	}
 }
 
-// Save prunes and writes the cache if it changed.
+// load reads a cache file (a JSON object domain -> Entry) entry by entry; invalid domain names are
+// skipped and the caps apply while loading.
+func (s *Service) load(r io.Reader) error {
+	dec := json.NewDecoder(r)
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return errors.New("cache: not a JSON object")
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		domain, _ := tok.(string)
+		var e Entry
+		if err := dec.Decode(&e); err != nil {
+			return err
+		}
+		if d, err := rdap.NormalizeDomain(domain); err == nil && d == domain && s.fresh(e) {
+			s.insertLocked(domain, e) // New has not published the service yet: no lock needed
+		}
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return errors.New("cache: truncated")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("cache: trailing data")
+	}
+	s.dirty = false
+	return nil
+}
+
+// Save prunes and writes the cache if it changed. Only a list of the entries is copied under the
+// lock; the JSON is streamed to the file.
 func (s *Service) Save() error {
-	s.prune()
+	type cached struct {
+		domain string
+		e      Entry
+	}
 	s.cmu.Lock()
+	s.pruneLocked(false)
 	if !s.dirty || s.opt.CacheDir == "" {
 		s.cmu.Unlock()
 		return nil
 	}
-	data, err := json.Marshal(s.entries)
+	snap := make([]cached, 0, len(s.entries))
+	for d, e := range s.entries {
+		snap = append(snap, cached{d, e})
+	}
 	s.dirty = false
 	s.cmu.Unlock()
+	err := writeAtomic(filepath.Join(s.opt.CacheDir, "rdap-cache.json"), func(w *bufio.Writer) error {
+		_ = w.WriteByte('{')
+		for i, c := range snap {
+			if i > 0 {
+				_ = w.WriteByte(',')
+			}
+			k, _ := json.Marshal(c.domain)
+			v, _ := json.Marshal(c.e)
+			_, _ = w.Write(k)
+			_ = w.WriteByte(':')
+			if _, err := w.Write(v); err != nil {
+				return err
+			}
+		}
+		return w.WriteByte('}')
+	})
 	if err != nil {
-		return err
-	}
-	if err := writeAtomic(filepath.Join(s.opt.CacheDir, "rdap-cache.json"), data); err != nil {
 		s.cmu.Lock()
 		s.dirty = true
 		s.cmu.Unlock()
@@ -325,7 +444,9 @@ func (s *Service) Len() int {
 	return len(s.entries)
 }
 
-func writeAtomic(path string, data []byte) error {
+// writeAtomic writes a file via a temporary file, fsync and rename; write fills it through a
+// buffered writer.
+func writeAtomic(path string, write func(w *bufio.Writer) error) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
@@ -335,7 +456,12 @@ func writeAtomic(path string, data []byte) error {
 		tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	bw := bufio.NewWriterSize(tmp, 64<<10)
+	if err := write(bw); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := bw.Flush(); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -410,6 +536,13 @@ func (s *Service) serve(w http.ResponseWriter, r *http.Request) int {
 		if err != nil {
 			writeError(w, 400, "bad_request", "The domain is not a valid domain name.")
 			return 400
+		}
+		select {
+		case s.sem <- struct{}{}:
+			defer func() { <-s.sem }()
+		default:
+			writeError(w, 503, "busy", "Too many lookups in progress.")
+			return 503
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), requestBudget)
 		defer cancel()

@@ -1,4 +1,4 @@
-"""Runs the crafted corpus (server/tests/corpus) through the full pipeline with the real rule tier."""
+"""Runs the crafted corpus (tests/corpus) through the full pipeline with the real rule tier."""
 
 import json
 import os

@@ -2,7 +2,7 @@ package rdap
 
 import (
 	"context"
-	"net"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -72,8 +72,28 @@ func TestDialGuard(t *testing.T) {
 			t.Errorf("%s allowed", addr)
 		}
 	}
-	if publicIP(net.ParseIP("not an ip")) {
-		t.Fatal("nil IP is public")
+	if publicIP(netip.Addr{}) {
+		t.Fatal("invalid IP is public")
+	}
+}
+
+// TestDialGuardSpecialRanges is the regression test for GO-14: NAT64, 6to4, Teredo, deprecated
+// and documentation ranges reach private or unintended addresses and must be refused.
+func TestDialGuardSpecialRanges(t *testing.T) {
+	for _, addr := range []string{
+		"[64:ff9b::a00:1]:443", "[64:ff9b:1::1]:443", "[2002:a00:1::1]:443", "[2001:0:4136:e378:8000:63bf:3fff:fdd2]:443",
+		"[::10.0.0.1]:443", "[::ffff:10.0.0.1]:443", "[::ffff:127.0.0.1]:443", "[fec0::1]:443", "[fc00::1]:443",
+		"[2001:db8::1]:443", "[3fff::1]:443", "[100::1]:443", "[ff02::1]:443", "[::]:443", "[fe80::1%25eth0]:443",
+		"192.0.2.1:443", "198.51.100.1:443", "203.0.113.1:443", "192.88.99.1:443", "224.0.0.1:443", "255.255.255.255:443",
+	} {
+		if err := guardedDialControl("tcp", addr, nil); err == nil {
+			t.Errorf("%s allowed", addr)
+		}
+	}
+	for _, addr := range []string{"1.1.1.1:443", "[2606:4700:4700::1111]:443", "[::ffff:8.8.8.8]:443", "[2a00:1450:4001::1]:443"} {
+		if err := guardedDialControl("tcp", addr, nil); err != nil {
+			t.Errorf("%s refused: %v", addr, err)
+		}
 	}
 }
 

@@ -4,6 +4,14 @@ Publication: the normalised data is written into /feeds/<id>/.tmp-<version>/ (sa
 /feeds/<id>/<version>/, then current.json is replaced atomically (write temp + fsync + rename). Directories are
 0755 and files 0644 so the analyzer (uid 10002) and inference (uid 10003) can read them. The two previous
 versions are kept so readers that loaded an older current.json can finish.
+
+Security review fixes (DECISIONS.md):
+- never-list guard (PY-11): an entry is removed when it equals or lies below a name of the static never-list
+  (brands, freemail), equals a Majestic top-1,000 name (exactly: subdomains of hosting platforms in the top 1,000
+  are user content and are rightly listed), or is a public suffix — wildcard PSL rules included;
+- change ratio (PY-18): each release is compared with the previous one and with a reference version that moves
+  at most once per 24 h, so a list cannot be drained in many small steps;
+- memory (PY-14): entries are compared as sorted arrays of 64-bit hashes; the previous version is streamed.
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ import os
 import re
 import shutil
 import time
+from array import array
 from dataclasses import dataclass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,8 +34,10 @@ MAX_REMOVED_RATIO = 0.50
 MAX_ADDED_RATIO = 3.00
 MAX_INVALID_RATIO = 0.05
 MAJESTIC_TOP_NEVER = 1000
-_LABEL = re.compile(r"^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$")
-_FEED_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+REFERENCE_FILE = "reference.json"
+REFERENCE_AGE_S = 86400
+_LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
+_FEED_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,47}")
 
 
 class ValidationError(Exception):
@@ -56,7 +67,7 @@ def load_manifest(path: str = MANIFEST_PATH) -> list[Feed]:
         doc = json.load(handle)
     feeds = []
     for entry in doc["feeds"]:
-        if not _FEED_ID.match(entry["id"]) or not entry["url"].startswith("https://"):
+        if not _FEED_ID.fullmatch(entry["id"]) or not entry["url"].startswith("https://"):
             raise ValueError(f"invalid manifest entry {entry.get('id')}")
         feeds.append(Feed(
             id=entry["id"], url=entry["url"], format=entry["format"], file=entry["file"], licence=entry["licence"],
@@ -83,7 +94,7 @@ def normalize_domain(value: str) -> str | None:
                 label = label.encode("idna").decode("ascii")
             except (UnicodeError, ValueError):
                 return None
-        if not _LABEL.match(label):
+        if not _LABEL.fullmatch(label):
             return None
         labels.append(label)
     return ".".join(labels) if len(labels) >= 2 else None
@@ -198,31 +209,61 @@ PARSERS = {"psl": parse_psl, "iana-tlds": parse_iana_tlds, "rdap-bootstrap": par
 
 # Validation ----------------------------------------------------------------------------------------------
 
-def _keys(entries) -> set[int]:
-    return {int.from_bytes(hashlib.blake2b(e.encode(), digest_size=8).digest(), "big") for e in entries}
+def _key(entry: str) -> int:
+    return int.from_bytes(hashlib.blake2b(entry.encode(), digest_size=8).digest(), "big")
 
 
-def check_change_ratio(previous: list[str] | None, current: list[str]) -> None:
-    """Rejects a release that removes more than 50 % or adds more than 300 % of the previous entries."""
-    if not previous:
+def sorted_keys(entries) -> array:
+    """Sorted, de-duplicated 64-bit keys (8 bytes each instead of a Python set of ints)."""
+    if isinstance(entries, array):
+        return entries
+    return array("Q", sorted({_key(e) for e in entries}))
+
+
+def _diff_counts(old: array, new: array) -> tuple[int, int]:
+    """(entries of `old` missing from `new`, entries of `new` missing from `old`), by merging."""
+    i = j = removed = added = 0
+    while i < len(old) and j < len(new):
+        a, b = old[i], new[j]
+        if a == b:
+            i += 1
+            j += 1
+        elif a < b:
+            removed += 1
+            i += 1
+        else:
+            added += 1
+            j += 1
+    return removed + (len(old) - i), added + (len(new) - j)
+
+
+def check_change_ratio(previous, current) -> None:
+    """Rejects a release that removes more than 50 % or adds more than 300 % of the previous entries. Both
+    arguments are entry lists or sorted key arrays."""
+    if previous is None or not len(previous):
         return
-    old, new = _keys(previous), _keys(current)
-    removed = len(old - new) / len(old)
-    added = len(new - old) / len(old)
-    if removed > MAX_REMOVED_RATIO:
+    old, new = sorted_keys(previous), sorted_keys(current)
+    removed, added = _diff_counts(old, new)
+    if removed / len(old) > MAX_REMOVED_RATIO:
         raise ValidationError("change_ratio_removed")
-    if added > MAX_ADDED_RATIO:
+    if added / len(old) > MAX_ADDED_RATIO:
         raise ValidationError("change_ratio_added")
 
 
-def load_never_list(feeds_dir: str, path: str = NEVER_LIST_PATH) -> set[str]:
-    """Static never-list plus the Majestic top 1,000 from the currently published Majestic feed."""
+def _read_never_file(path: str) -> set[str]:
     never = set()
     with open(path, "r", encoding="utf-8") as handle:
         for line in handle:
             value = line.strip()
             if value and not value.startswith("#"):
                 never.add(value.lower())
+    return never
+
+
+def load_never_lists(feeds_dir: str, path: str = NEVER_LIST_PATH) -> tuple[set[str], set[str]]:
+    """(static never-list: names whose subdomains are protected too, Majestic top 1,000: exact names)."""
+    static = _read_never_file(path)
+    top: set[str] = set()
     current = read_current(feeds_dir, "majestic")
     if current:
         try:
@@ -230,28 +271,69 @@ def load_never_list(feeds_dir: str, path: str = NEVER_LIST_PATH) -> set[str]:
                 for i, line in enumerate(handle):
                     if i >= MAJESTIC_TOP_NEVER:
                         break
-                    never.add(line.strip())
-        except OSError:
+                    top.add(line.strip())
+        except (OSError, UnicodeError):
             pass
-    return never
+    return static, top
 
 
-def load_public_suffixes(feeds_dir: str) -> set[str]:
+def load_never_list(feeds_dir: str, path: str = NEVER_LIST_PATH) -> set[str]:
+    """Static never-list plus the Majestic top 1,000 from the currently published Majestic feed."""
+    static, top = load_never_lists(feeds_dir, path)
+    return static | top
+
+
+@dataclass(frozen=True)
+class Suffixes:
+    rules: frozenset
+    wildcards: frozenset      # "ck" for the rule "*.ck"
+    exceptions: frozenset     # "www.ck" for the rule "!www.ck"
+
+    def is_suffix(self, name: str) -> bool:
+        if name in self.rules:
+            return True
+        parent = name.partition(".")[2]
+        return bool(parent) and parent in self.wildcards and name not in self.exceptions
+
+
+def load_public_suffixes(feeds_dir: str) -> Suffixes:
     current = read_current(feeds_dir, "psl")
+    empty = Suffixes(frozenset(), frozenset(), frozenset())
     if not current:
-        return set()
+        return empty
     try:
         _, rules = parse_psl(os.path.join(feeds_dir, "psl", current["path"]))
     except (OSError, ValidationError, UnicodeError):
-        return set()
-    return {r for r in rules if not r.startswith(("!", "*"))}
+        return empty
+    plain, wildcards, exceptions = set(), set(), set()
+    for rule in rules:
+        if rule.startswith("!"):
+            exceptions.add(rule[1:].lower())
+        elif rule.startswith("*."):
+            wildcards.add(rule[2:].lower())
+        else:
+            plain.add(rule.lower())
+    return Suffixes(frozenset(plain), frozenset(wildcards), frozenset(exceptions))
 
 
-def apply_never_list(entries: list[str], never: set[str], suffixes: set[str]) -> tuple[list[str], int]:
+def never_listed(entry: str, never: set[str], exact: set[str] = frozenset()) -> bool:
+    """`entry` equals or lies below a name in `never`, or equals (with or without "www.") a name in `exact`."""
+    labels = entry.split(".")
+    if any(".".join(labels[i:]) in never for i in range(len(labels) - 1)):
+        return True
+    base = entry[4:] if entry.startswith("www.") else entry
+    return entry in exact or base in exact
+
+
+def apply_never_list(entries: list[str], never: set[str], suffixes, exact: set[str] = frozenset()
+                     ) -> tuple[list[str], int]:
+    """Removes never-list names, their subdomains (`never`), exact names (`exact`) and public suffixes.
+    `suffixes` is a Suffixes object or a plain set of suffix names. A release with more than max(10, 1 %) hits
+    is rejected as poisoned."""
+    is_suffix = suffixes.is_suffix if isinstance(suffixes, Suffixes) else suffixes.__contains__
     kept, removed = [], 0
     for entry in entries:
-        base = entry[4:] if entry.startswith("www.") else entry
-        if entry in never or base in never or entry in suffixes:
+        if never_listed(entry, never, exact) or is_suffix(entry):
             removed += 1
             continue
         kept.append(entry)
@@ -280,6 +362,30 @@ def read_current(feeds_dir: str, feed_id: str) -> dict | None:
         return None
 
 
+def _version_keys(feeds_dir: str, feed: Feed, rel_path: str) -> array | None:
+    """Sorted keys of a published version, streamed from its file (no list of a million strings)."""
+    path = os.path.join(feeds_dir, feed.id, rel_path)
+    try:
+        if feed.format == "psl":
+            return sorted_keys(parse_psl(path)[1])
+        if feed.format == "rdap-bootstrap":
+            return sorted_keys(parse_rdap_bootstrap(path)[1])
+        keys = set()
+        with open(path, "r", encoding="ascii", errors="replace") as handle:
+            for line in handle:
+                value = line.strip()
+                if value:
+                    keys.add(_key(value))
+        return array("Q", sorted(keys))
+    except (OSError, ValidationError, UnicodeError):
+        return None
+
+
+def previous_keys(feeds_dir: str, feed: Feed) -> array | None:
+    current = read_current(feeds_dir, feed.id)
+    return _version_keys(feeds_dir, feed, current["path"]) if current else None
+
+
 def previous_entries(feeds_dir: str, feed: Feed) -> list[str] | None:
     current = read_current(feeds_dir, feed.id)
     if not current:
@@ -294,6 +400,28 @@ def previous_entries(feeds_dir: str, feed: Feed) -> list[str] | None:
             return [line.strip() for line in handle if line.strip()]
     except (OSError, ValidationError, UnicodeError):
         return None
+
+
+def read_reference(feeds_dir: str, feed_id: str) -> dict | None:
+    try:
+        with open(os.path.join(feeds_dir, feed_id, REFERENCE_FILE), "r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        if not isinstance(doc, dict) or not isinstance(doc.get("path"), str) or ".." in doc["path"] \
+                or not isinstance(doc.get("version"), str) or not isinstance(doc.get("published_at"), int):
+            return None
+        if not os.path.isfile(os.path.join(feeds_dir, feed_id, doc["path"])):
+            return None
+        return doc
+    except (OSError, ValueError):
+        return None
+
+
+def update_reference(feeds_dir: str, feed: Feed, current: dict, now: int) -> None:
+    """The reference moves to the version just published when it is missing or at least 24 h old."""
+    reference = read_reference(feeds_dir, feed.id)
+    if reference is None or now - reference["published_at"] >= REFERENCE_AGE_S:
+        _write_json_atomic(os.path.join(feeds_dir, feed.id, REFERENCE_FILE),
+                           {"version": current["version"], "path": current["path"], "published_at": now})
 
 
 def _fsync_dir(path: str) -> None:
@@ -345,7 +473,8 @@ def publish(feeds_dir: str, feed: Feed, data: bytes, entries: int, now: int | No
                "commercial": feed.commercial, "attribution": feed.attribution, "refresh_s": feed.refresh_s,
                "path": f"{version}/{feed.file}"}
     _write_json_atomic(os.path.join(feed_dir, "current.json"), current)
-    prune(feed_dir, version)
+    reference = read_reference(feeds_dir, feed.id)
+    prune(feed_dir, version, keep=(reference["version"],) if reference else ())
     return current
 
 
@@ -359,11 +488,11 @@ def touch_current(feeds_dir: str, feed: Feed, now: int | None = None) -> dict | 
     return current
 
 
-def prune(feed_dir: str, keep_version: str) -> None:
+def prune(feed_dir: str, keep_version: str, keep: tuple = ()) -> None:
     versions = sorted(d for d in os.listdir(feed_dir)
                       if os.path.isdir(os.path.join(feed_dir, d)) and not d.startswith("."))
     for old in versions[:-KEEP_VERSIONS]:
-        if old != keep_version:
+        if old != keep_version and old not in keep:   # the 24 h reference version stays (PY-18)
             shutil.rmtree(os.path.join(feed_dir, old), ignore_errors=True)
     for name in os.listdir(feed_dir):
         if name.startswith(".tmp-") and not name.endswith(keep_version):
@@ -372,15 +501,28 @@ def prune(feed_dir: str, keep_version: str) -> None:
 
 def process_download(feeds_dir: str, feed: Feed, raw_path: str, now: int | None = None) -> tuple[str, dict | None]:
     """Parses, validates and publishes a downloaded file. Returns (status, current.json document)."""
+    now = int(time.time()) if now is None else now
     raw_size = os.path.getsize(raw_path)
     data, entries = PARSERS[feed.format](raw_path)
     removed = 0
     if feed.never_list_guard:
-        entries, removed = apply_never_list(entries, load_never_list(feeds_dir), load_public_suffixes(feeds_dir))
+        static, top = load_never_lists(feeds_dir)
+        entries, removed = apply_never_list(entries, static, load_public_suffixes(feeds_dir), top)
         data = ("\n".join(entries) + "\n").encode("ascii")
     validate(feed, raw_size, entries)
-    check_change_ratio(previous_entries(feeds_dir, feed), entries)
+    count = len(entries)
+    keys = sorted_keys(entries)
+    del entries                                   # the strings are no longer needed (PY-14)
+    check_change_ratio(previous_keys(feeds_dir, feed), keys)
     current = read_current(feeds_dir, feed.id)
+    reference = read_reference(feeds_dir, feed.id)
+    if reference is not None and (current is None or reference["version"] != current["version"]):
+        try:
+            check_change_ratio(_version_keys(feeds_dir, feed, reference["path"]), keys)
+        except ValidationError as exc:
+            raise ValidationError(f"{exc}_vs_reference") from None
     if current and current.get("sha256") == hashlib.sha256(data).hexdigest():
         return "unchanged", touch_current(feeds_dir, feed, now)
-    return ("published" if not removed else "published_filtered"), publish(feeds_dir, feed, data, len(entries), now)
+    published = publish(feeds_dir, feed, data, count, now)
+    update_reference(feeds_dir, feed, published, now)
+    return ("published" if not removed else "published_filtered"), published

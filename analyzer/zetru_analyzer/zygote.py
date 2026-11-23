@@ -38,14 +38,16 @@ def _warm_up() -> None:
     ed = ed25519.Ed25519PrivateKey.generate()
     ed.public_key().verify(ed.sign(b"x"), b"x")
     Cipher(algorithms.AES(b"\0" * 16), modes.CBC(b"\0" * 16)).encryptor().update(b"\0" * 16)
-    for codec in ("utf-8", "latin-1", "cp1252", "iso-8859-15", "utf-16-le", "cp437", "punycode", "idna", "ascii",
-                  "iso-2022-jp", "shift_jis", "euc-jp", "gb2312", "gbk", "big5", "koi8-r", "windows-1251"):
+    for codec in ("punycode", "idna"):   # used for host names (domains.py), not for body text
         try:
             b"abcd".decode(codec, errors="replace")
         except (LookupError, UnicodeError):
             pass
     from . import attachments, confusables, mimeparse, pipeline  # noqa: F401
 
+    mimeparse.warm_up_codecs()   # every charset body text may be decoded with
+    mimeparse.parse(b"From: a@b.example\r\nTo: c@d.example\r\nSubject: =?utf-8?q?x?=\r\n"
+                    b"Content-Type: text/plain; charset=utf-8\r\n\r\nx")
     confusables.table()
     pipeline.analyze  # noqa: B018
 
@@ -55,6 +57,9 @@ def main() -> int:
     feeds_dir = os.environ.get("ZETRU_FEEDS_DIR", "/feeds")
     enforce = os.environ.get("ZETRU_SANDBOX", "enforce") != "off"
     ctrl = socket.socket(fileno=fd)
+    from . import sandbox
+
+    sandbox.set_not_dumpable()   # exec made this process dumpable again; workers must not read its memory (PY-07)
     try:
         import resource
 

@@ -5,7 +5,11 @@ Details fixed here (documented in DECISIONS.md):
   the body after the head, [OCR] ≤ 60;
 - in the body, link positions are marked with `[LINK]` (anchor text stays, URLs are replaced);
 - the server does not know the contact history, so `first-contact` is never emitted; `bulk` is added
-  when List-Id, List-Unsubscribe or Precedence bulk/list headers are present.
+  when List-Id, List-Unsubscribe or Precedence bulk/list headers are present;
+- every token is cut to 64 characters (63 + "…") and control characters are removed (security review PY-03): a
+  rendered state stays below about 36,000 characters, far under the 64 KiB the supervisor and the inference
+  service accept, so a sender cannot switch the classifier off with long tokens. `render` cuts at
+  `MAX_STATE_CHARS` as a last resort.
 """
 
 from __future__ import annotations
@@ -20,6 +24,11 @@ SUBJECT_TOKENS = 30
 OCR_TOKENS = 60
 MAX_LINKS = 8
 MAX_ATTACH = 5
+MAX_TOKEN_CHARS = 64
+MAX_STATE_CHARS = 48_000
+_UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+_SURROGATE = re.compile("[\ud800-\udfff]")
+_LINK = "[LINK]"
 
 _URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 _QUOTE_HEADER = re.compile(
@@ -53,8 +62,49 @@ QUESTIONS = [
 QUESTION_IDS = [q["id"] for q in QUESTIONS]
 
 
+def clip_word(word: str) -> str:
+    word = _SURROGATE.sub("\ufffd", _UNSAFE.sub("", word))
+    return word if len(word) <= MAX_TOKEN_CHARS else word[:MAX_TOKEN_CHARS - 1] + "…"
+
+
 def _clip_tokens(text: str, n: int) -> str:
-    return " ".join(text.split()[:n])
+    words = (clip_word(w) for w in text.split()[:n])
+    return " ".join(w for w in words if w)
+
+
+def collapse_links(text: str) -> str:
+    """Replaces every run of two or more `[LINK]` markers separated only by whitespace, together with the
+    whitespace around the run, by " [LINK] ". Same result as the former regex substitution of
+    `(?:WS*[LINK]WS*){2,}` (WS = any whitespace) in linear time; the regex is quadratic on long whitespace runs
+    (PY-05)."""
+    positions = []
+    i = text.find(_LINK)
+    while i >= 0:
+        positions.append(i)
+        i = text.find(_LINK, i + len(_LINK))
+    if len(positions) < 2:
+        return text
+    out, pos, k, n = [], 0, 0, len(text)
+    while k < len(positions):
+        j = k
+        while j + 1 < len(positions):
+            gap = text[positions[j] + len(_LINK):positions[j + 1]]
+            if gap and not gap.isspace():
+                break
+            j += 1
+        if j > k:
+            start = positions[k]
+            while start > pos and text[start - 1].isspace():
+                start -= 1
+            end = positions[j] + len(_LINK)
+            while end < n and text[end].isspace():
+                end += 1
+            out.append(text[pos:start])
+            out.append(" [LINK] ")
+            pos = end
+        k = j + 1
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def strip_quotes_and_signature(text: str) -> str:
@@ -73,13 +123,12 @@ def strip_quotes_and_signature(text: str) -> str:
 
 
 def body_tokens(state_text: str) -> list[str]:
-    cleaned = _URL.sub(" [LINK] ", strip_quotes_and_signature(state_text))
-    cleaned = re.sub(r"(?:\s*\[LINK\]\s*){2,}", " [LINK] ", cleaned)
+    cleaned = collapse_links(_URL.sub(" [LINK] ", strip_quotes_and_signature(state_text)))
     out = []
     # Sentence boundaries survive as tokens ending in punctuation; line breaks become ' / ' separators
     # so that list items and headings stay separate sentences for the rule tier.
     for line in cleaned.splitlines():
-        words = line.split()
+        words = [w for w in (clip_word(w) for w in line.split()) if w]
         if not words:
             continue
         if out and not out[-1].endswith((".", "!", "?", ":", "/")):
@@ -96,7 +145,7 @@ def render(display_name: str, from_domain: str | None, flags: list[str], auth: s
         f"[FROM] {_clip_tokens(display_name, 12) or '-'} | {from_domain or '-'} | flags: {', '.join(flags) or '-'}",
         f"[AUTH] {auth}",
         f"[SUBJECT] {_clip_tokens(subject, SUBJECT_TOKENS)}",
-        f"[BODY-HEAD] {' '.join(head)}",
+        f"[BODY-HEAD] {' '.join(clip_word(w) for w in head)}",
     ]
     link_items = []
     for text, domain, mismatch in links[:MAX_LINKS]:
@@ -106,9 +155,9 @@ def render(display_name: str, from_domain: str | None, flags: list[str], auth: s
         link_items.append(item)
     lines.append("[LINKS] " + ("; ".join(link_items) if link_items else "-"))
     lines.append("[ATTACH] " + (", ".join(attach[:MAX_ATTACH]) if attach else "-"))
-    lines.append("[OCR] " + (_clip_tokens(ocr, OCR_TOKENS) if ocr else "-"))
-    lines.append("[BODY-TAIL] " + (" ".join(tail) if tail else "-"))
-    return "\n".join(lines)
+    lines.append("[OCR] " + ((_clip_tokens(ocr, OCR_TOKENS) or "-") if ocr else "-"))
+    lines.append("[BODY-TAIL] " + (" ".join(clip_word(w) for w in tail) if tail else "-"))
+    return "\n".join(lines)[:MAX_STATE_CHARS]
 
 
 def state_version() -> str:

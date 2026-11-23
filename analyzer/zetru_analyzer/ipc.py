@@ -7,6 +7,10 @@ Worker → supervisor: {"t": "req", dns?, feeds?, ages?, decide?}, {"t": "result
                      {"t": "error", "stage": str, "error_class": str}
 Supervisor → worker: {"t": "job", "meta": {...}, "policy": {...}, "now": int} + raw mail as blob,
                      {"t": "resp", dns?, feeds?, feeds_status?, ages?, decide?}
+
+Frame limits: a job frame carries at most the largest mail the HTTP layer accepts (framing.HARD_MAX_MAIL) plus
+the JSON of meta and policy (PY-17); a reply frame is at most MAX_RESP, which the supervisor enforces when it
+builds the reply (PY-06); worker frames are at most MAX_FROM_WORKER.
 """
 
 from __future__ import annotations
@@ -15,8 +19,12 @@ import json
 import socket
 import struct
 
-MAX_TO_WORKER = 22 * 1024 * 1024
+from .framing import HARD_MAX_MAIL
+
+JOB_JSON_MAX = 512 * 1024              # meta ≤ 64 KiB of UTF-8, JSON-escaped at most 12 bytes per character
+MAX_TO_WORKER = HARD_MAX_MAIL + JOB_JSON_MAX
 MAX_FROM_WORKER = 1024 * 1024
+MAX_RESP = 512 * 1024
 _HEADER = struct.Struct(">II")
 
 
@@ -24,9 +32,14 @@ class ProtocolError(Exception):
     pass
 
 
-def encode(obj: dict, blob: bytes = b"") -> bytes:
+def encode_head(obj: dict, blob_len: int = 0) -> bytes:
+    """Frame header and JSON part; the blob follows separately (no copy of a 20 MB mail, PY-19)."""
     payload = json.dumps(obj, separators=(",", ":"), ensure_ascii=True).encode("ascii")
-    return _HEADER.pack(4 + len(payload) + len(blob), len(payload)) + payload + blob
+    return _HEADER.pack(4 + len(payload) + blob_len, len(payload)) + payload
+
+
+def encode(obj: dict, blob: bytes = b"") -> bytes:
+    return encode_head(obj, len(blob)) + bytes(blob)
 
 
 def decode(frame_body: bytes) -> tuple[dict, bytes]:

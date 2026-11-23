@@ -6,7 +6,9 @@
 package fsutil
 
 import (
+	"bufio"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -16,6 +18,15 @@ import (
 // renames it over path and fsyncs the directory. Readers see either the old or the new content,
 // never a partial file. The file mode is perm (0600 for everything the gateway stores).
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return WriteStreamAtomic(path, perm, func(w io.Writer) error {
+		_, err := w.Write(data)
+		return err
+	})
+}
+
+// WriteStreamAtomic is WriteFileAtomic for content produced by write, which receives a buffered
+// writer on the temporary file. Large state is written this way without building it in memory.
+func WriteStreamAtomic(path string, perm os.FileMode, write func(w io.Writer) error) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
@@ -32,7 +43,12 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	bw := bufio.NewWriterSize(tmp, 64<<10)
+	if err := write(bw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := bw.Flush(); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -58,6 +74,15 @@ func SyncDir(dir string) error {
 	}
 	defer d.Close()
 	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
+		return err
+	}
+	return nil
+}
+
+// RemoveIfExists deletes path and ignores a missing file. It is used for files that must not
+// outlive their retention period (concept §14.2), such as state files from older versions.
+func RemoveIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

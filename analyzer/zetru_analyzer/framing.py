@@ -10,11 +10,11 @@ import re
 import struct
 
 DEFAULT_MAX_MAIL = 20_971_520
-HARD_MAX_MAIL = 64 * 1024 * 1024
+HARD_MAX_MAIL = 20 * 1024 * 1024   # = the gateway's cap for a tenant's max_mail_bytes; the worker frame fits it (PY-17)
 MAX_META = 65_536
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
-_HEX32 = re.compile(r"^[0-9a-f]{32}$")
-_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_HEX32 = re.compile(r"[0-9a-f]{32}")
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 KNOWN_BACKENDS = ("rules", "encoder", "llm", "openjev", "jev")
 
 
@@ -42,10 +42,11 @@ def parse_policy(header: str | None) -> dict:
 
 
 def valid_tenant(value: str | None) -> bool:
-    return bool(value) and bool(_UUID.match(value))
+    return isinstance(value, str) and _UUID.fullmatch(value) is not None
 
 
-def parse_analyze(body: bytes, max_mail: int) -> tuple[dict, bytes]:
+def parse_analyze(body: bytes, max_mail: int) -> tuple[dict, memoryview]:
+    """(meta, raw mail). The mail is a view into `body`, not a copy (PY-19)."""
     if len(body) < 6:
         raise BadRequest("framing")
     (n,) = struct.unpack(">I", body[:4])
@@ -55,7 +56,7 @@ def parse_analyze(body: bytes, max_mail: int) -> tuple[dict, bytes]:
         meta = json.loads(body[4:4 + n].decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         raise BadRequest("meta json") from None
-    raw = body[4 + n:]
+    raw = memoryview(body)[4 + n:]
     if not 1 <= len(raw) <= max_mail:
         raise BadRequest("mail size")
     meta = validate_meta(meta)
@@ -70,10 +71,10 @@ def validate_meta(meta) -> dict:
     if meta.get("schema") != 1:
         raise BadRequest("schema")
     sha = meta.get("mail_sha256")
-    if not isinstance(sha, str) or not _HEX64.match(sha):
+    if not isinstance(sha, str) or not _HEX64.fullmatch(sha):
         raise BadRequest("mail_sha256")
     ref = meta.get("account_ref")
-    if not isinstance(ref, str) or not _HEX32.match(ref):
+    if not isinstance(ref, str) or not _HEX32.fullmatch(ref):
         raise BadRequest("account_ref")
     if meta.get("mode") not in ("auto", "confirm", "manual"):
         raise BadRequest("mode")
@@ -117,7 +118,7 @@ def parse_url_check(body: bytes) -> list[dict]:
         host, sha = item.get("host"), item.get("url_sha256")
         if not isinstance(host, str) or not 1 <= len(host) <= 253:
             raise BadRequest("host")
-        if not isinstance(sha, str) or not _HEX64.match(sha):
+        if not isinstance(sha, str) or not _HEX64.fullmatch(sha):
             raise BadRequest("url_sha256")
         out.append({"host": host, "url_sha256": sha})
     return out

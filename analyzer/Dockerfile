@@ -1,7 +1,7 @@
-# Zetru analyzer (concept §3.2). Build context: server/analyzer
-#   docker build -t zetru/analyzer:1.0.0 server/analyzer
-# Pin PYTHON_IMAGE to a digest for releases (python:3.12-slim-bookworm@sha256:...).
-ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+# Zetru analyzer (concept §3.2). Build context: analyzer
+#   docker build -t zetru/analyzer:1.0.0 analyzer
+# PYTHON_IMAGE is pinned by digest; refresh it with deploy/pin-images.sh update.
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 
 FROM ${PYTHON_IMAGE} AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1

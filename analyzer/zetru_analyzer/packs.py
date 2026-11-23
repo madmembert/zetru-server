@@ -129,6 +129,7 @@ class Packs:
                 self.label_index.append((brand, label, skeleton_fold(label),
                                          tuple(skeleton_fold(t) for t in label.split("-"))))
         self.all_official = tuple(sorted({d for b in self.brands for d in b.official}))
+        self._official_cache: dict[tuple[str, str | None], Brand | None] = {}
 
     @staticmethod
     def _domains(values) -> list[str]:
@@ -161,10 +162,13 @@ class Packs:
         return bool(host) and any(is_subdomain_or_equal(host, h) for h in self.esp_trackers)
 
     def official_brand(self, host: str, reg_domain: str | None) -> Brand | None:
-        for brand in self.brands:
-            if brand.is_official_any(host, reg_domain):
-                return brand
-        return None
+        key = (host, reg_domain)
+        if key in self._official_cache:
+            return self._official_cache[key]
+        found = next((brand for brand in self.brands if brand.is_official_any(host, reg_domain)), None)
+        if len(self._official_cache) < 20_000:   # a mail has at most a few thousand hosts (pipeline limits)
+            self._official_cache[key] = found
+        return found
 
     def brands_mentioned(self, text: str, local_part: str = "") -> list[Brand]:
         """Brands whose display tokens appear in `text` (e.g. a display name) or in an address local part."""

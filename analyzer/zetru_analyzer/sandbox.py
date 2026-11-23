@@ -2,11 +2,26 @@
 filter installed with prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) through ctypes.
 
 The filter first checks the architecture (x86_64 or aarch64; anything else kills the process), rejects the
-x32 ABI on x86_64, and returns EPERM for: socket, socketpair, connect, bind, listen, accept, accept4,
-execve, execveat, ptrace, process_vm_readv/writev, mount and the new mount API (open_tree, move_mount,
-fsopen, fsconfig, fsmount, fspick, mount_setattr), umount2, io_uring_setup/enter/register (io_uring would
-bypass per-syscall filtering), creat, openat2 (its flags live in a struct the filter cannot inspect), and
-open/openat with any of O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND. Everything else is allowed.
+x32 ABI on x86_64, and returns EPERM for everything in DENY and for open/openat with any of O_WRONLY, O_RDWR,
+O_CREAT, O_TRUNC, O_APPEND. Everything else is allowed. DENY covers
+- network and process creation: socket, socketpair, connect, bind, listen, accept, accept4, execve, execveat,
+  clone, clone3, fork, vfork, unshare, setns;
+- other processes: ptrace, process_vm_readv/writev, kcmp, pidfd_open, pidfd_getfd, and every way to send a
+  signal (kill, tkill, tgkill, rt_sigqueueinfo, rt_tgsigqueueinfo, pidfd_send_signal) — a compromised worker
+  cannot stop the zygote or the supervisor (security review PY-08);
+- the file system beyond reading: creat, openat2 (its flags live in a struct the filter cannot inspect),
+  mkdir(at), mknod(at), link(at), symlink(at), unlink(at), rmdir, rename(at/at2), truncate, ftruncate, chmod
+  family, chown family, xattr writes, utime family, name_to_handle_at, open_by_handle_at — nothing a worker
+  leaves behind can reach a later worker;
+- kernel objects that outlive the worker or widen the attack surface: SysV and POSIX message queues,
+  semaphores and shared memory, keyctl/add_key/request_key, memfd_create, bpf, userfaultfd, perf_event_open,
+  io_uring_setup/enter/register (io_uring would bypass per-syscall filtering), mount, umount2 and the new mount
+  API;
+- prctl, so neither PR_SET_DUMPABLE nor PR_SET_PDEATHSIG can be undone after the filter is installed.
+
+`set_not_dumpable()` is also called by the supervisor and the zygote (PY-07): non-dumpable processes have their
+/proc/<pid> files owned by root, so a compromised worker running as the same uid cannot open the supervisor's
+/proc/1/mem (with kernel.yama.ptrace_scope 0 it otherwise could).
 
 On anything other than Linux the sandbox is skipped with a logged warning (local development on macOS).
 """
@@ -54,25 +69,63 @@ WRITE_FLAGS = O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND
 
 # Syscall numbers (x86_64: arch/x86/entry/syscalls/syscall_64.tbl; aarch64: include/uapi/asm-generic/unistd.h).
 # Numbers ≥ 424 are shared by all architectures.
-COMMON_NEW = {"open_tree": 428, "move_mount": 429, "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433,
-              "io_uring_setup": 425, "io_uring_enter": 426, "io_uring_register": 427, "openat2": 437,
-              "mount_setattr": 442}
+COMMON_NEW = {"pidfd_send_signal": 424, "io_uring_setup": 425, "io_uring_enter": 426, "io_uring_register": 427,
+              "open_tree": 428, "move_mount": 429, "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433,
+              "pidfd_open": 434, "clone3": 435, "openat2": 437, "pidfd_getfd": 438, "mount_setattr": 442,
+              "fchmodat2": 452}
 SYSCALLS = {
     "x86_64": {
-        "open": 2, "socket": 41, "connect": 42, "accept": 43, "bind": 49, "listen": 50, "socketpair": 53,
-        "execve": 59, "creat": 85, "ptrace": 101, "mount": 165, "umount2": 166, "openat": 257, "accept4": 288,
-        "process_vm_readv": 310, "process_vm_writev": 311, "execveat": 322, **COMMON_NEW,
+        "open": 2, "shmget": 29, "shmat": 30, "shmctl": 31, "socket": 41, "connect": 42, "accept": 43, "bind": 49,
+        "listen": 50, "socketpair": 53, "clone": 56, "fork": 57, "vfork": 58, "execve": 59, "kill": 62,
+        "semget": 64, "semop": 65, "semctl": 66, "shmdt": 67, "msgget": 68, "msgsnd": 69, "msgrcv": 70, "msgctl": 71,
+        "truncate": 76, "ftruncate": 77, "rename": 82, "mkdir": 83, "rmdir": 84, "creat": 85, "link": 86,
+        "unlink": 87, "symlink": 88, "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93, "lchown": 94,
+        "ptrace": 101, "rt_sigqueueinfo": 129, "utime": 132, "mknod": 133, "prctl": 157, "mount": 165,
+        "umount2": 166, "setxattr": 188, "lsetxattr": 189, "fsetxattr": 190, "removexattr": 197,
+        "lremovexattr": 198, "fremovexattr": 199, "tkill": 200, "semtimedop": 220, "tgkill": 234, "utimes": 235,
+        "mq_open": 240, "mq_unlink": 241, "add_key": 248, "request_key": 249, "keyctl": 250, "openat": 257,
+        "mkdirat": 258, "mknodat": 259, "fchownat": 260, "futimesat": 261, "unlinkat": 263, "renameat": 264,
+        "linkat": 265, "symlinkat": 266, "fchmodat": 268, "unshare": 272, "utimensat": 280, "accept4": 288,
+        "rt_tgsigqueueinfo": 297, "perf_event_open": 298, "name_to_handle_at": 303, "open_by_handle_at": 304,
+        "setns": 308, "process_vm_readv": 310, "process_vm_writev": 311, "kcmp": 312, "renameat2": 316,
+        "memfd_create": 319, "bpf": 321, "execveat": 322, "userfaultfd": 323, **COMMON_NEW,
     },
     "aarch64": {
-        "socket": 198, "socketpair": 199, "bind": 200, "listen": 201, "accept": 202, "connect": 203,
-        "execve": 221, "accept4": 242, "process_vm_readv": 270, "process_vm_writev": 271, "execveat": 281,
-        "ptrace": 117, "mount": 40, "umount2": 39, "openat": 56, **COMMON_NEW,
+        "setxattr": 5, "lsetxattr": 6, "fsetxattr": 7, "removexattr": 14, "lremovexattr": 15, "fremovexattr": 16,
+        "mknodat": 33, "mkdirat": 34, "unlinkat": 35, "symlinkat": 36, "linkat": 37, "renameat": 38,
+        "umount2": 39, "mount": 40, "truncate": 45, "ftruncate": 46, "fchmod": 52, "fchmodat": 53,
+        "fchownat": 54, "fchown": 55, "openat": 56, "utimensat": 88, "unshare": 97, "ptrace": 117, "kill": 129,
+        "tkill": 130, "tgkill": 131, "rt_sigqueueinfo": 138, "prctl": 167, "mq_open": 180, "mq_unlink": 181,
+        "msgget": 186, "msgctl": 187, "msgrcv": 188, "msgsnd": 189, "semget": 190, "semctl": 191,
+        "semtimedop": 192, "semop": 193, "shmget": 194, "shmctl": 195, "shmat": 196, "shmdt": 197, "socket": 198,
+        "socketpair": 199, "bind": 200, "listen": 201, "accept": 202, "connect": 203, "add_key": 217,
+        "request_key": 218, "keyctl": 219, "clone": 220, "execve": 221, "rt_tgsigqueueinfo": 240,
+        "perf_event_open": 241, "accept4": 242, "name_to_handle_at": 264, "open_by_handle_at": 265, "setns": 268,
+        "process_vm_readv": 270, "process_vm_writev": 271, "kcmp": 272, "renameat2": 276, "memfd_create": 279,
+        "bpf": 280, "execveat": 281, "userfaultfd": 282, **COMMON_NEW,
     },
 }
-DENY = ("socket", "socketpair", "connect", "bind", "listen", "accept", "accept4", "execve", "execveat", "ptrace",
-        "process_vm_readv", "process_vm_writev", "mount", "umount2", "open_tree", "move_mount", "fsopen",
-        "fsconfig", "fsmount", "fspick", "mount_setattr", "io_uring_setup", "io_uring_enter",
-        "io_uring_register", "creat", "openat2")
+DENY = (
+    # network and process creation
+    "socket", "socketpair", "connect", "bind", "listen", "accept", "accept4", "execve", "execveat", "clone",
+    "clone3", "fork", "vfork", "unshare", "setns",
+    # other processes and signals
+    "ptrace", "process_vm_readv", "process_vm_writev", "kcmp", "pidfd_open", "pidfd_getfd", "kill", "tkill",
+    "tgkill", "rt_sigqueueinfo", "rt_tgsigqueueinfo", "pidfd_send_signal",
+    # file system changes
+    "creat", "openat2", "mkdir", "mkdirat", "mknod", "mknodat", "link", "linkat", "symlink", "symlinkat", "unlink",
+    "unlinkat", "rmdir", "rename", "renameat", "renameat2", "truncate", "ftruncate", "chmod", "fchmod", "fchmodat",
+    "fchmodat2", "chown", "fchown", "lchown", "fchownat", "setxattr", "lsetxattr", "fsetxattr", "removexattr",
+    "lremovexattr", "fremovexattr", "utime", "utimes", "futimesat", "utimensat", "name_to_handle_at",
+    "open_by_handle_at",
+    # persistent or kernel-level objects
+    "shmget", "shmat", "shmctl", "shmdt", "semget", "semop", "semctl", "semtimedop", "msgget", "msgsnd", "msgrcv",
+    "msgctl", "mq_open", "mq_unlink", "add_key", "request_key", "keyctl", "memfd_create", "bpf", "userfaultfd",
+    "perf_event_open", "io_uring_setup", "io_uring_enter", "io_uring_register", "mount", "umount2", "open_tree",
+    "move_mount", "fsopen", "fsconfig", "fsmount", "fspick", "mount_setattr",
+    # the process's own hardening
+    "prctl",
+)
 AUDIT_ARCH = {"x86_64": AUDIT_ARCH_X86_64, "aarch64": AUDIT_ARCH_AARCH64}
 
 # Offsets in struct seccomp_data {int nr; u32 arch; u64 ip; u64 args[6];} (little-endian: low word first).
@@ -92,7 +145,8 @@ def _jump(code: int, k: int, jt: int, jf: int) -> tuple:
 
 
 def build_filter(arch: str) -> list[tuple]:
-    """Returns the BPF program as (code, jt, jf, k) tuples."""
+    """Returns the BPF program as (code, jt, jf, k) tuples. Every denied number jumps to one shared EPERM
+    return at the end, so the program stays well below the 255-instruction jump range."""
     nums = SYSCALLS[arch]
     eperm = SECCOMP_RET_ERRNO | errno.EPERM
     prog: list[tuple] = [
@@ -103,9 +157,6 @@ def build_filter(arch: str) -> list[tuple]:
     ]
     if arch == "x86_64":
         prog += [_jump(BPF_JMP_JGE_K, X32_SYSCALL_BIT, 0, 1), _stmt(BPF_RET_K, SECCOMP_RET_KILL_PROCESS)]
-    for name in DENY:
-        if name in nums:
-            prog += [_jump(BPF_JMP_JEQ_K, nums[name], 0, 1), _stmt(BPF_RET_K, eperm)]
     # open(path, flags) has flags in args[1]; openat(dirfd, path, flags) in args[2].
     for name, arg in (("open", 1), ("openat", 2)):
         if name not in nums:
@@ -117,7 +168,12 @@ def build_filter(arch: str) -> list[tuple]:
             _stmt(BPF_RET_K, eperm),
             _stmt(BPF_LD_W_ABS, OFF_NR),   # restore nr for the following comparisons
         ]
+    denied = sorted({nums[name] for name in DENY if name in nums})
+    for index, nr in enumerate(denied):
+        # jt skips the remaining comparisons and the ALLOW return and lands on the shared EPERM return.
+        prog.append(_jump(BPF_JMP_JEQ_K, nr, len(denied) - index, 0))
     prog.append(_stmt(BPF_RET_K, SECCOMP_RET_ALLOW))
+    prog.append(_stmt(BPF_RET_K, eperm))
     return prog
 
 
@@ -197,6 +253,18 @@ def apply_rlimits() -> None:
     resource.setrlimit(resource.RLIMIT_NOFILE, (RLIMIT_NOFILE_N, RLIMIT_NOFILE_N))
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
     resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+
+
+def set_not_dumpable() -> bool:
+    """PR_SET_DUMPABLE 0 for the calling process (supervisor and zygote; the worker does it in harden_worker).
+    Returns True when it took effect; outside Linux it does nothing."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        _prctl(_libc(), PR_SET_DUMPABLE, 0)
+        return True
+    except (SandboxError, OSError, AttributeError):
+        return False
 
 
 def harden_worker(enforce: bool = True) -> bool:

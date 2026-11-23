@@ -6,26 +6,34 @@
 // UTC day) and the devices that reported it. No text, no band value and no mail hash is stored in
 // clear. Everything expires 30 days after its last day.
 //
-// Design choices (DECISIONS.md, "Campaign counters"):
+// Design choices (DECISIONS.md, "Campaign counters" and "Memory"):
 //   - Capped sets instead of HyperLogLog sketches: the thresholds need exact counts only up to 20
 //     and a membership test ("reported by a device of the same tenant"), which sketches cannot give.
-//     Sets hold at most 32 members (reporters: at most 5 per tenant); counts saturate there.
+//     Sets hold at most 32 members (reporters: at most 5 per tenant); counts saturate there. A set is
+//     a small slice, not a map: it never holds more than 32 entries.
 //   - A mail matches a campaign only when at least two of its four bands agree (the count used is
 //     the second-highest per-band count). Matching on any single 16-bit band would make an unrelated
 //     mail collide with a reported band with probability 4·k/65536 for k reported bands, which
 //     would put G2 gates on legitimate mail.
 //   - Counting happens in the tenant's own scope; tenants whose policy enables cross-tenant counting
 //     also count in, and read from, the global scope.
+//   - Memory is bounded by two caps (bands of all scopes; mail references plus reports of all
+//     tenants). When a cap is exceeded, entries are evicted from the largest scopes first (water
+//     filling), so one tenant cannot evict another tenant's counters while it holds more than its
+//     share. Inside a scope, bands without reporters go before bands with reporters, oldest first.
+//   - The file is a streamed binary record format (bounded memory for save and load).
 package campaign
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -42,8 +50,9 @@ const (
 	SetCap           = 32
 	ReportersPerTen  = 5
 	MinBandAgreement = 2
-	DefaultMaxBands  = 200_000
-	DefaultMaxRefs   = 200_000
+	// Defaults of the pi profile (config.Profile carries the per-profile values).
+	DefaultMaxBands = 40_000
+	DefaultMaxRefs  = 40_000
 )
 
 // Signal IDs produced by the gateway (§6.6).
@@ -104,67 +113,61 @@ type (
 	key32 [32]byte
 )
 
+// member is one device in a band's seen or reporter set (20 bytes).
 type member struct {
+	device hash8
 	tenant hash8
 	day    int32
 }
 
 type band struct {
-	seen      map[hash8]member
-	reporters map[hash8]member
-}
-
-func newBand() *band {
-	return &band{seen: map[hash8]member{}, reporters: map[hash8]member{}}
+	seen      []member
+	reporters []member
 }
 
 func (b *band) lastDay() int32 {
 	var last int32
 	for _, m := range b.seen {
-		if m.day > last {
-			last = m.day
-		}
+		last = max(last, m.day)
 	}
 	for _, m := range b.reporters {
-		if m.day > last {
-			last = m.day
-		}
+		last = max(last, m.day)
 	}
 	return last
 }
 
-func evictOldest(set map[hash8]member) {
-	var oldestKey hash8
-	oldest := int32(1 << 30)
-	for k, m := range set {
-		if m.day < oldest {
-			oldest, oldestKey = m.day, k
+// removeOldest drops the member with the smallest day (order inside a set does not matter).
+func removeOldest(set []member) []member {
+	oldest := 0
+	for i := range set {
+		if set[i].day < set[oldest].day {
+			oldest = i
 		}
 	}
-	delete(set, oldestKey)
+	set[oldest] = set[len(set)-1]
+	return set[:len(set)-1]
 }
 
 func (b *band) addSeen(device, tenant hash8, day int32) {
-	if m, ok := b.seen[device]; ok {
-		if day > m.day {
-			m.day = day
+	for i := range b.seen {
+		if b.seen[i].device == device {
+			b.seen[i].day = max(b.seen[i].day, day)
+			b.seen[i].tenant = tenant
+			return
 		}
-		m.tenant = tenant
-		b.seen[device] = m
-		return
 	}
 	if len(b.seen) >= SetCap {
-		evictOldest(b.seen)
+		b.seen = removeOldest(b.seen)
 	}
-	b.seen[device] = member{tenant: tenant, day: day}
+	b.seen = append(b.seen, member{device: device, tenant: tenant, day: day})
 }
 
 func (b *band) addReporter(device, tenant hash8, day int32) {
-	if _, ok := b.reporters[device]; ok {
-		return
-	}
 	perTenant := 0
 	for _, m := range b.reporters {
+		if m.device == device {
+			return
+		}
 		if m.tenant == tenant {
 			perTenant++
 		}
@@ -173,15 +176,36 @@ func (b *band) addReporter(device, tenant hash8, day int32) {
 		return
 	}
 	if len(b.reporters) >= SetCap {
-		evictOldest(b.reporters)
+		b.reporters = removeOldest(b.reporters)
 	}
-	b.reporters[device] = member{tenant: tenant, day: day}
+	b.reporters = append(b.reporters, member{device: device, tenant: tenant, day: day})
+}
+
+// filter keeps the members for which keep returns true and reports whether any was dropped.
+func filter(set []member, keep func(member) bool) ([]member, bool) {
+	out := set[:0]
+	for _, m := range set {
+		if keep(m) {
+			out = append(out, m)
+		}
+	}
+	dropped := len(out) != len(set)
+	if len(out) == 0 {
+		return nil, dropped
+	}
+	return out, dropped
 }
 
 type mailRef struct {
-	fp    string
+	fp    [16]byte
 	bands [4]key32
 	day   int32
+}
+
+// Limits are the store's caps; zero values select the defaults.
+type Limits struct {
+	MaxBands int // keyed bands of the global and all tenant scopes together
+	MaxRefs  int // mail references and reports of all tenants together
 }
 
 // Store holds all counters. It is safe for concurrent use.
@@ -199,39 +223,60 @@ type Store struct {
 	refs    map[string]map[key32]mailRef // tenant -> HMAC(K_fp, tenant ‖ mail_sha256) -> ref
 	reports map[string]map[key32]int32   // tenant -> HMAC(K_fp, "report" ‖ device ‖ fp) -> day
 	dirty   bool
+
+	// New global bands created per tenant on globalDay (in memory only), see GlobalNewPerDay.
+	globalDay int32
+	globalNew map[string]int
 }
 
 // Open creates a store keyed with kfp and loads path if it exists. A file written with a
-// different K_fp, or a corrupt file, is discarded (moved aside) because its hashes are meaningless.
-func Open(path string, kfp []byte, now func() time.Time) (*Store, error) {
+// different K_fp, an older format, or a corrupt file is deleted because its hashes are
+// meaningless (and must not outlive the 30-day retention of §14.2 as a moved-aside copy).
+func Open(path string, kfp []byte, now func() time.Time, lim Limits) (*Store, error) {
 	if len(kfp) != 32 {
 		return nil, errors.New("K_fp must be 32 bytes")
 	}
 	if now == nil {
 		now = time.Now
 	}
-	s := &Store{kfp: append([]byte(nil), kfp...), now: now, path: path, MaxBands: DefaultMaxBands, MaxRefs: DefaultMaxRefs,
-		global: map[key32]*band{}, tenants: map[string]map[key32]*band{}, refs: map[string]map[key32]mailRef{},
-		reports: map[string]map[key32]int32{}}
+	if lim.MaxBands <= 0 {
+		lim.MaxBands = DefaultMaxBands
+	}
+	if lim.MaxRefs <= 0 {
+		lim.MaxRefs = DefaultMaxRefs
+	}
+	s := &Store{kfp: append([]byte(nil), kfp...), now: now, path: path, MaxBands: lim.MaxBands, MaxRefs: lim.MaxRefs}
+	s.reset()
 	if path == "" {
 		return s, nil
 	}
-	data, err := os.ReadFile(path)
+	_ = fsutil.RemoveIfExists(path + ".discarded") // left behind by earlier versions
+	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := s.decode(data); err != nil {
-		_ = os.Rename(path, path+".discarded")
-		s.global, s.tenants = map[key32]*band{}, map[string]map[key32]*band{}
-		s.refs, s.reports = map[string]map[key32]mailRef{}, map[string]map[key32]int32{}
+	err = s.decode(bufio.NewReaderSize(f, 64<<10))
+	_ = f.Close()
+	if err != nil {
+		s.reset()
+		if err := fsutil.RemoveIfExists(path); err != nil {
+			return nil, err
+		}
 	}
 	s.mu.Lock()
 	s.expireLocked(dayNum(now()))
+	s.enforceCapsLocked()
 	s.mu.Unlock()
 	return s, nil
+}
+
+func (s *Store) reset() {
+	s.global, s.tenants = map[key32]*band{}, map[string]map[key32]*band{}
+	s.refs, s.reports = map[string]map[key32]mailRef{}, map[string]map[key32]int32{}
+	s.globalNew = map[string]int{}
 }
 
 func dayNum(t time.Time) int32 { return int32(t.Unix() / 86400) }
@@ -270,9 +315,11 @@ func (s *Store) tenantHash(tenantID string) hash8 {
 	return short(s.mac([]byte("tenant"), []byte(tenantID)))
 }
 
-func (s *Store) fingerprintID(keys [4]key32) string {
+func (s *Store) fingerprint(keys [4]key32) [16]byte {
 	k := s.mac([]byte("fingerprint"), keys[0][:], keys[1][:], keys[2][:], keys[3][:])
-	return hex.EncodeToString(k[:16])
+	var fp [16]byte
+	copy(fp[:], k[:16])
+	return fp
 }
 
 // mailRefKey is HMAC(K_fp, tenant ‖ mail_sha256) (§13.2 mail_ref).
@@ -287,7 +334,7 @@ func (s *Store) reportKey(deviceID, fingerprintID string) key32 {
 func bandIn(scope map[key32]*band, k key32) *band {
 	b := scope[k]
 	if b == nil {
-		b = newBand()
+		b = &band{}
 		scope[k] = b
 	}
 	return b
@@ -302,6 +349,22 @@ func (s *Store) tenantScope(tenantID string) map[key32]*band {
 	return scope
 }
 
+// GlobalNewPerDay is how many new global bands one tenant may create per UTC day: a tenth of the
+// band cap. Existing global bands are always updated; beyond the allowance a cross-tenant tenant
+// counts in, and reads from, its own scope only for the new bands.
+func (s *Store) GlobalNewPerDay() int { return max(s.MaxBands/10, 1) }
+
+func (s *Store) mayCreateGlobalLocked(tenantID string, today int32) bool {
+	if today != s.globalDay {
+		s.globalDay, s.globalNew = today, map[string]int{}
+	}
+	if s.globalNew[tenantID] >= s.GlobalNewPerDay() {
+		return false
+	}
+	s.globalNew[tenantID]++
+	return true
+}
+
 // Observe records that a device of a tenant analysed a mail with the given bands and returns the
 // fingerprint and campaign signal. cross selects cross-tenant counting (tenant policy).
 func (s *Store) Observe(tenantID, deviceID string, cross bool, bands [4]uint16, mailSHA256 string) Result {
@@ -310,7 +373,7 @@ func (s *Store) Observe(tenantID, deviceID string, cross bool, bands [4]uint16, 
 		globalKeys[i] = s.GlobalBandKey(i, v)
 		tenantKeys[i] = s.tenantBandKey(tenantID, globalKeys[i])
 	}
-	fp := s.fingerprintID(globalKeys)
+	fp := s.fingerprint(globalKeys)
 	dev, ten := s.deviceHash(deviceID), s.tenantHash(tenantID)
 	refKey := s.mailRefKey(tenantID, mailSHA256)
 	today := dayNum(s.now())
@@ -324,9 +387,14 @@ func (s *Store) Observe(tenantID, deviceID string, cross bool, bands [4]uint16, 
 		tb.addSeen(dev, ten, today)
 		read[i] = tb
 		if cross {
-			gb := bandIn(s.global, globalKeys[i])
-			gb.addSeen(dev, ten, today)
-			read[i] = gb
+			gb := s.global[globalKeys[i]]
+			if gb == nil && s.mayCreateGlobalLocked(tenantID, today) {
+				gb = bandIn(s.global, globalKeys[i])
+			}
+			if gb != nil {
+				gb.addSeen(dev, ten, today)
+				read[i] = gb
+			}
 		}
 	}
 	refs := s.refs[tenantID]
@@ -337,7 +405,7 @@ func (s *Store) Observe(tenantID, deviceID string, cross bool, bands [4]uint16, 
 	refs[refKey] = mailRef{fp: fp, bands: globalKeys, day: today}
 	s.dirty = true
 	res := evaluate(read, ten, today)
-	res.FingerprintID = fp
+	res.FingerprintID = hex.EncodeToString(fp[:])
 	s.enforceCapsLocked()
 	return res
 }
@@ -400,6 +468,10 @@ func (s *Store) Report(tenantID, deviceID string, cross bool, fingerprintID, mai
 	if !verdicts[verdict] {
 		return false, errors.New("unknown verdict")
 	}
+	fp, err := hex.DecodeString(fingerprintID)
+	if err != nil || len(fp) != 16 {
+		return false, ErrNotFound
+	}
 	refKey := s.mailRefKey(tenantID, mailSHA256)
 	repKey := s.reportKey(deviceID, fingerprintID)
 	dev, ten := s.deviceHash(deviceID), s.tenantHash(tenantID)
@@ -408,7 +480,7 @@ func (s *Store) Report(tenantID, deviceID string, cross bool, fingerprintID, mai
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ref, ok := s.refs[tenantID][refKey]
-	if !ok || !hmac.Equal([]byte(ref.fp), []byte(fingerprintID)) {
+	if !ok || !hmac.Equal(ref.fp[:], fp) {
 		return false, ErrNotFound
 	}
 	reports := s.reports[tenantID]
@@ -422,12 +494,15 @@ func (s *Store) Report(tenantID, deviceID string, cross bool, fingerprintID, mai
 	reports[repKey] = today
 	s.dirty = true
 	if verdict == "legit" {
+		s.enforceCapsLocked()
 		return false, nil
 	}
 	scope := s.tenantScope(tenantID)
 	for _, gk := range ref.bands {
 		bandIn(scope, s.tenantBandKey(tenantID, gk)).addReporter(dev, ten, today)
 		if cross {
+			// Reports are bounded by the per-device report quota, so they may always create a
+			// global band (unlike sightings, see GlobalNewPerDay).
 			bandIn(s.global, gk).addReporter(dev, ten, today)
 		}
 	}
@@ -455,7 +530,7 @@ func (s *Store) Retain(valid map[string]bool) {
 	defer s.mu.Unlock()
 	invalid := map[hash8]bool{}
 	for _, b := range s.global {
-		for _, set := range []map[hash8]member{b.seen, b.reporters} {
+		for _, set := range [][]member{b.seen, b.reporters} {
 			for _, m := range set {
 				if !validHashes[m.tenant] {
 					invalid[m.tenant] = true
@@ -485,17 +560,21 @@ func (s *Store) purgeLocked(tenantHashes map[hash8]bool, tenantGone func(string)
 			s.dirty = true
 		}
 	}
+	for id := range s.globalNew {
+		if tenantGone(id) {
+			delete(s.globalNew, id)
+		}
+	}
 	if len(tenantHashes) == 0 {
 		return
 	}
+	keep := func(m member) bool { return !tenantHashes[m.tenant] }
 	for k, b := range s.global {
-		for _, set := range []map[hash8]member{b.seen, b.reporters} {
-			for dev, m := range set {
-				if tenantHashes[m.tenant] {
-					delete(set, dev)
-					s.dirty = true
-				}
-			}
+		var d1, d2 bool
+		b.seen, d1 = filter(b.seen, keep)
+		b.reporters, d2 = filter(b.reporters, keep)
+		if d1 || d2 {
+			s.dirty = true
 		}
 		if len(b.seen) == 0 && len(b.reporters) == 0 {
 			delete(s.global, k)
@@ -513,18 +592,18 @@ func (s *Store) Expire() {
 
 func (s *Store) expireLocked(today int32) {
 	cutoff := today - TTLDays + 1 // keep days cutoff..today (30 days)
+	keep := func(m member) bool { return m.day >= cutoff }
 	expireScope := func(scope map[key32]*band) {
 		for k, b := range scope {
-			for _, set := range []map[hash8]member{b.seen, b.reporters} {
-				for dev, m := range set {
-					if m.day < cutoff {
-						delete(set, dev)
-						s.dirty = true
-					}
-				}
+			var d1, d2 bool
+			b.seen, d1 = filter(b.seen, keep)
+			b.reporters, d2 = filter(b.reporters, keep)
+			if d1 || d2 {
+				s.dirty = true
 			}
 			if len(b.seen) == 0 && len(b.reporters) == 0 {
 				delete(scope, k)
+				s.dirty = true
 			}
 		}
 	}
@@ -559,66 +638,143 @@ func (s *Store) expireLocked(today int32) {
 	}
 }
 
-// enforceCapsLocked evicts the least recently active bands and references when the store grows
-// beyond its caps (bounded memory on a 256 MB container).
+// waterLevel returns the largest level L such that cutting every size above L down to L removes at
+// least need entries. Scopes at or below L are left alone.
+func waterLevel(sizes []int, need int) int {
+	sorted := append([]int(nil), sizes...)
+	sort.Sort(sort.Reverse(sort.IntSlice(sorted)))
+	prefix := 0
+	for k, size := range sorted {
+		prefix += size
+		level := (prefix - need) / (k + 1)
+		next := 0
+		if k+1 < len(sorted) {
+			next = sorted[k+1]
+		}
+		if level >= next {
+			return max(level, 0)
+		}
+	}
+	return 0
+}
+
+// enforceCapsLocked keeps the store within its caps (bounded memory on a 256 MB container). When a
+// cap is exceeded it evicts down to 90 % of the cap, taking entries only from the largest scopes:
+// a tenant (or the global scope) loses entries only while it holds more than the others.
 func (s *Store) enforceCapsLocked() {
-	type aged struct {
-		day  int32
-		drop func()
-	}
-	nBands := len(s.global)
+	s.enforceBandCapLocked()
+	s.enforceRefCapLocked()
+}
+
+func (s *Store) enforceBandCapLocked() {
+	scopes := make([]map[key32]*band, 0, len(s.tenants)+1)
+	total := len(s.global)
+	scopes = append(scopes, s.global)
 	for _, scope := range s.tenants {
-		nBands += len(scope)
+		scopes = append(scopes, scope)
+		total += len(scope)
 	}
-	if nBands > s.MaxBands {
-		var all []aged
-		for k, b := range s.global {
-			k := k
-			all = append(all, aged{b.lastDay(), func() { delete(s.global, k) }})
-		}
-		for _, scope := range s.tenants {
-			scope := scope
-			for k, b := range scope {
-				k := k
-				all = append(all, aged{b.lastDay(), func() { delete(scope, k) }})
-			}
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i].day < all[j].day })
-		for _, a := range all[:len(all)-s.MaxBands*9/10] {
-			a.drop()
-		}
-		s.dirty = true
+	if total <= s.MaxBands {
+		return
 	}
-	nRefs := 0
-	for _, refs := range s.refs {
-		nRefs += len(refs)
+	sizes := make([]int, len(scopes))
+	for i, scope := range scopes {
+		sizes[i] = len(scope)
 	}
-	for _, reps := range s.reports {
-		nRefs += len(reps)
+	level := waterLevel(sizes, total-s.MaxBands*9/10)
+	for _, scope := range scopes {
+		if n := len(scope) - level; n > 0 {
+			evictBands(scope, n)
+		}
 	}
-	if nRefs > s.MaxRefs {
-		var all []aged
-		for _, refs := range s.refs {
-			refs := refs
-			for k, r := range refs {
-				k := k
-				all = append(all, aged{r.day, func() { delete(refs, k) }})
-			}
+	for id, scope := range s.tenants {
+		if len(scope) == 0 {
+			delete(s.tenants, id)
 		}
-		for _, reps := range s.reports {
-			reps := reps
-			for k, d := range reps {
-				k := k
-				all = append(all, aged{d, func() { delete(reps, k) }})
-			}
+	}
+	s.dirty = true
+}
+
+// evictBands removes n bands of a scope: bands without reporters first (reports are scarce, a
+// flood of sightings must not erase them), each group oldest first.
+func evictBands(scope map[key32]*band, n int) {
+	type aged struct {
+		k        key32
+		reported bool
+		day      int32
+	}
+	all := make([]aged, 0, len(scope))
+	for k, b := range scope {
+		all = append(all, aged{k, len(b.reporters) > 0, b.lastDay()})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].reported != all[j].reported {
+			return !all[i].reported
 		}
-		sort.Slice(all, func(i, j int) bool { return all[i].day < all[j].day })
-		if drop := len(all) - s.MaxRefs*9/10; drop > 0 {
-			for _, a := range all[:drop] {
-				a.drop()
-			}
+		return all[i].day < all[j].day
+	})
+	for _, a := range all[:min(n, len(all))] {
+		delete(scope, a.k)
+	}
+}
+
+func (s *Store) enforceRefCapLocked() {
+	ids := make([]string, 0, len(s.refs)+len(s.reports))
+	seen := map[string]bool{}
+	for id := range s.refs {
+		ids, seen[id] = append(ids, id), true
+	}
+	for id := range s.reports {
+		if !seen[id] {
+			ids = append(ids, id)
 		}
-		s.dirty = true
+	}
+	total := 0
+	sizes := make([]int, len(ids))
+	for i, id := range ids {
+		sizes[i] = len(s.refs[id]) + len(s.reports[id])
+		total += sizes[i]
+	}
+	if total <= s.MaxRefs {
+		return
+	}
+	level := waterLevel(sizes, total-s.MaxRefs*9/10)
+	for i, id := range ids {
+		if n := sizes[i] - level; n > 0 {
+			s.evictRefsLocked(id, n)
+		}
+	}
+	s.dirty = true
+}
+
+// evictRefsLocked removes the n oldest mail references and reports of one tenant.
+func (s *Store) evictRefsLocked(tenantID string, n int) {
+	type aged struct {
+		k      key32
+		report bool
+		day    int32
+	}
+	refs, reps := s.refs[tenantID], s.reports[tenantID]
+	all := make([]aged, 0, len(refs)+len(reps))
+	for k, r := range refs {
+		all = append(all, aged{k, false, r.day})
+	}
+	for k, d := range reps {
+		all = append(all, aged{k, true, d})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].day < all[j].day })
+	for _, a := range all[:min(n, len(all))] {
+		if a.report {
+			delete(reps, a.k)
+		} else {
+			delete(refs, a.k)
+		}
+	}
+	if len(refs) == 0 {
+		delete(s.refs, tenantID)
+	}
+	if len(reps) == 0 {
+		delete(s.reports, tenantID)
 	}
 }
 
@@ -639,153 +795,88 @@ func (s *Store) Stats() (globalBands, tenantBands, refs, reports int) {
 	return
 }
 
+// TenantStats returns the band, reference and report counts of one tenant (for tests).
+func (s *Store) TenantStats(tenantID string) (bands, refs, reports int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.tenants[tenantID]), len(s.refs[tenantID]), len(s.reports[tenantID])
+}
+
 // --- persistence ---
+//
+// File format 2 (binary, big-endian):
+//
+//	header  "ZCMP" | version 2 (1 byte) | first 8 bytes of HMAC(K_fp, "key-check")
+//	record  'G' key(32) nSeen(1) nRep(1) member*         global band
+//	        'T' tenant key(32) nSeen(1) nRep(1) member*  tenant band
+//	        'R' tenant key(32) fp(16) bands(4×32) day(4) mail reference
+//	        'P' tenant key(32) day(4)                    report
+//	        'E' SHA-256 of everything before it, 'E' included (32)
+//	member  device(8) tenant(8) day(4);  tenant = length (1) + ID bytes (1–64)
+//
+// Save streams records in batches under short lock sections; Open decodes record by record and
+// enforces the caps while loading, so neither builds a second copy of the store.
 
-type fileMember struct {
-	D string `json:"d"`
-	T string `json:"t"`
-	Y int32  `json:"y"`
-}
+const (
+	fileMagic   = "ZCMP"
+	fileVersion = 2
+	saveBatch   = 256
+	maxTenantID = 64
+)
 
-type fileBand struct {
-	K string       `json:"k"`
-	S []fileMember `json:"s,omitempty"`
-	R []fileMember `json:"r,omitempty"`
-}
-
-type fileRef struct {
-	K  string    `json:"k"`
-	FP string    `json:"fp"`
-	B  [4]string `json:"b"`
-	Y  int32     `json:"y"`
-}
-
-type fileReport struct {
-	K string `json:"k"`
-	Y int32  `json:"y"`
-}
-
-type fileFormat struct {
-	Version  int                     `json:"version"`
-	KeyCheck string                  `json:"key_check"`
-	Global   []fileBand              `json:"global"`
-	Tenants  map[string][]fileBand   `json:"tenants"`
-	Refs     map[string][]fileRef    `json:"mail_refs"`
-	Reports  map[string][]fileReport `json:"reports"`
-}
-
-var b64 = base64.RawStdEncoding
-
-func (s *Store) keyCheck() string {
+func (s *Store) keyCheck() []byte {
 	k := s.mac([]byte("key-check"))
-	return hex.EncodeToString(k[:8])
+	return k[:8]
 }
 
-func encodeBands(scope map[key32]*band) []fileBand {
-	out := make([]fileBand, 0, len(scope))
-	for k, b := range scope {
-		fb := fileBand{K: b64.EncodeToString(k[:])}
-		for d, m := range b.seen {
-			fb.S = append(fb.S, fileMember{D: b64.EncodeToString(d[:]), T: b64.EncodeToString(m.tenant[:]), Y: m.day})
-		}
-		for d, m := range b.reporters {
-			fb.R = append(fb.R, fileMember{D: b64.EncodeToString(d[:]), T: b64.EncodeToString(m.tenant[:]), Y: m.day})
-		}
-		out = append(out, fb)
+type recordWriter struct{ buf bytes.Buffer }
+
+func (w *recordWriter) tenant(id string) {
+	w.buf.WriteByte(byte(len(id)))
+	w.buf.WriteString(id)
+}
+
+func (w *recordWriter) day(d int32) {
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], uint32(d))
+	w.buf.Write(b[:])
+}
+
+func (w *recordWriter) members(set []member) {
+	for _, m := range set {
+		w.buf.Write(m.device[:])
+		w.buf.Write(m.tenant[:])
+		w.day(m.day)
+	}
+}
+
+func (w *recordWriter) band(kind byte, tenantID string, k key32, b *band) {
+	w.buf.WriteByte(kind)
+	if kind == 'T' {
+		w.tenant(tenantID)
+	}
+	w.buf.Write(k[:])
+	w.buf.WriteByte(byte(len(b.seen)))
+	w.buf.WriteByte(byte(len(b.reporters)))
+	w.members(b.seen)
+	w.members(b.reporters)
+}
+
+type scopeKeys struct {
+	id   string
+	keys []key32
+}
+
+func keysOf[V any](m map[key32]V) []key32 {
+	out := make([]key32, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
 	return out
 }
 
-func decodeFixed(s string, out []byte) error {
-	raw, err := b64.DecodeString(s)
-	if err != nil || len(raw) != len(out) {
-		return errors.New("bad hash")
-	}
-	copy(out, raw)
-	return nil
-}
-
-func decodeBands(in []fileBand) (map[key32]*band, error) {
-	scope := map[key32]*band{}
-	for _, fb := range in {
-		var k key32
-		if err := decodeFixed(fb.K, k[:]); err != nil {
-			return nil, err
-		}
-		b := newBand()
-		for i, list := range [][]fileMember{fb.S, fb.R} {
-			for _, fm := range list {
-				var d, t hash8
-				if decodeFixed(fm.D, d[:]) != nil || decodeFixed(fm.T, t[:]) != nil {
-					return nil, errors.New("bad member")
-				}
-				if i == 0 {
-					b.seen[d] = member{tenant: t, day: fm.Y}
-				} else {
-					b.reporters[d] = member{tenant: t, day: fm.Y}
-				}
-			}
-		}
-		scope[k] = b
-	}
-	return scope, nil
-}
-
-func (s *Store) decode(data []byte) error {
-	var f fileFormat
-	if err := json.Unmarshal(data, &f); err != nil {
-		return err
-	}
-	if f.Version != 1 || f.KeyCheck != s.keyCheck() {
-		return errors.New("counter file belongs to another key or version")
-	}
-	global, err := decodeBands(f.Global)
-	if err != nil {
-		return err
-	}
-	tenants := map[string]map[key32]*band{}
-	for id, list := range f.Tenants {
-		if tenants[id], err = decodeBands(list); err != nil {
-			return err
-		}
-	}
-	refs := map[string]map[key32]mailRef{}
-	for id, list := range f.Refs {
-		m := map[key32]mailRef{}
-		for _, fr := range list {
-			var k key32
-			if err := decodeFixed(fr.K, k[:]); err != nil {
-				return err
-			}
-			r := mailRef{fp: fr.FP, day: fr.Y}
-			for i := range fr.B {
-				if err := decodeFixed(fr.B[i], r.bands[i][:]); err != nil {
-					return err
-				}
-			}
-			m[k] = r
-		}
-		refs[id] = m
-	}
-	reports := map[string]map[key32]int32{}
-	for id, list := range f.Reports {
-		m := map[key32]int32{}
-		for _, fr := range list {
-			var k key32
-			if err := decodeFixed(fr.K, k[:]); err != nil {
-				return err
-			}
-			m[k] = fr.Y
-		}
-		reports[id] = m
-	}
-	s.mu.Lock()
-	s.global, s.tenants, s.refs, s.reports = global, tenants, refs, reports
-	s.mu.Unlock()
-	return nil
-}
-
-// Save writes the store if it changed since the last save.
+// Save writes the store if it changed since the last save. Only the list of keys is copied; the
+// records are encoded in batches of saveBatch under the lock and written to disk outside it.
 func (s *Store) Save() error {
 	s.mu.Lock()
 	s.expireLocked(dayNum(s.now()))
@@ -793,36 +884,263 @@ func (s *Store) Save() error {
 		s.mu.Unlock()
 		return nil
 	}
-	f := fileFormat{Version: 1, KeyCheck: s.keyCheck(), Global: encodeBands(s.global),
-		Tenants: map[string][]fileBand{}, Refs: map[string][]fileRef{}, Reports: map[string][]fileReport{}}
-	for id, scope := range s.tenants {
-		f.Tenants[id] = encodeBands(scope)
-	}
-	for id, refs := range s.refs {
-		for k, r := range refs {
-			fr := fileRef{K: b64.EncodeToString(k[:]), FP: r.fp, Y: r.day}
-			for i := range r.bands {
-				fr.B[i] = b64.EncodeToString(r.bands[i][:])
-			}
-			f.Refs[id] = append(f.Refs[id], fr)
-		}
-	}
-	for id, reps := range s.reports {
-		for k, d := range reps {
-			f.Reports[id] = append(f.Reports[id], fileReport{K: b64.EncodeToString(k[:]), Y: d})
-		}
-	}
 	s.dirty = false
-	s.mu.Unlock()
-	data, err := json.Marshal(f)
-	if err != nil {
-		return err
+	global := keysOf(s.global)
+	var tenants, refs, reports []scopeKeys
+	for id, scope := range s.tenants {
+		tenants = append(tenants, scopeKeys{id, keysOf(scope)})
 	}
-	if err := fsutil.WriteFileAtomic(s.path, data, 0o600); err != nil {
+	for id, m := range s.refs {
+		refs = append(refs, scopeKeys{id, keysOf(m)})
+	}
+	for id, m := range s.reports {
+		reports = append(reports, scopeKeys{id, keysOf(m)})
+	}
+	keyCheck := s.keyCheck()
+	s.mu.Unlock()
+
+	err := fsutil.WriteStreamAtomic(s.path, 0o600, func(out io.Writer) error {
+		h := sha256.New()
+		w := io.MultiWriter(out, h)
+		if _, err := w.Write(append(append([]byte(fileMagic), fileVersion), keyCheck...)); err != nil {
+			return err
+		}
+		// batch encodes the records of keys in groups of saveBatch with fn under the lock and
+		// writes each group outside it.
+		var rw recordWriter
+		batch := func(keys []key32, fn func(rw *recordWriter, k key32)) error {
+			for i := 0; i < len(keys); i += saveBatch {
+				rw.buf.Reset()
+				s.mu.Lock()
+				for _, k := range keys[i:min(i+saveBatch, len(keys))] {
+					fn(&rw, k)
+				}
+				s.mu.Unlock()
+				if _, err := w.Write(rw.buf.Bytes()); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if err := batch(global, func(rw *recordWriter, k key32) {
+			if b := s.global[k]; b != nil {
+				rw.band('G', "", k, b)
+			}
+		}); err != nil {
+			return err
+		}
+		for _, sk := range tenants {
+			if err := batch(sk.keys, func(rw *recordWriter, k key32) {
+				if b := s.tenants[sk.id][k]; b != nil {
+					rw.band('T', sk.id, k, b)
+				}
+			}); err != nil {
+				return err
+			}
+		}
+		for _, sk := range refs {
+			if err := batch(sk.keys, func(rw *recordWriter, k key32) {
+				r, ok := s.refs[sk.id][k]
+				if !ok {
+					return
+				}
+				rw.buf.WriteByte('R')
+				rw.tenant(sk.id)
+				rw.buf.Write(k[:])
+				rw.buf.Write(r.fp[:])
+				for i := range r.bands {
+					rw.buf.Write(r.bands[i][:])
+				}
+				rw.day(r.day)
+			}); err != nil {
+				return err
+			}
+		}
+		for _, sk := range reports {
+			if err := batch(sk.keys, func(rw *recordWriter, k key32) {
+				d, ok := s.reports[sk.id][k]
+				if !ok {
+					return
+				}
+				rw.buf.WriteByte('P')
+				rw.tenant(sk.id)
+				rw.buf.Write(k[:])
+				rw.day(d)
+			}); err != nil {
+				return err
+			}
+		}
+		if _, err := w.Write([]byte{'E'}); err != nil {
+			return err
+		}
+		_, err := out.Write(h.Sum(nil))
+		return err
+	})
+	if err != nil {
 		s.mu.Lock()
 		s.dirty = true
 		s.mu.Unlock()
 		return fmt.Errorf("saving campaign counters: %w", err)
 	}
 	return nil
+}
+
+// recordReader reads the file format above, hashing everything it reads.
+type recordReader struct {
+	r   *bufio.Reader
+	h   io.Writer
+	err error
+	buf [32]byte
+}
+
+func (rr *recordReader) read(n int) []byte {
+	if rr.err != nil {
+		return rr.buf[:n]
+	}
+	if _, rr.err = io.ReadFull(rr.r, rr.buf[:n]); rr.err == nil {
+		rr.h.Write(rr.buf[:n])
+	}
+	return rr.buf[:n]
+}
+
+func (rr *recordReader) byte() byte { return rr.read(1)[0] }
+
+func (rr *recordReader) key() key32 {
+	var k key32
+	copy(k[:], rr.read(32))
+	return k
+}
+
+func (rr *recordReader) day() int32 { return int32(binary.BigEndian.Uint32(rr.read(4))) }
+
+func (rr *recordReader) tenant() string {
+	n := int(rr.byte())
+	if rr.err == nil && (n < 1 || n > maxTenantID) {
+		rr.err = errors.New("bad tenant ID length")
+	}
+	if rr.err != nil {
+		return ""
+	}
+	id := make([]byte, n)
+	if _, rr.err = io.ReadFull(rr.r, id); rr.err == nil {
+		rr.h.Write(id)
+	}
+	return string(id)
+}
+
+func (rr *recordReader) members(n int) []member {
+	if n > SetCap {
+		rr.err = errors.New("set larger than its cap")
+	}
+	if rr.err != nil || n == 0 {
+		return nil
+	}
+	set := make([]member, n)
+	for i := range set {
+		copy(set[i].device[:], rr.read(8))
+		copy(set[i].tenant[:], rr.read(8))
+		set[i].day = rr.day()
+	}
+	return set
+}
+
+func (rr *recordReader) band() (key32, *band) {
+	k := rr.key()
+	nSeen, nRep := int(rr.byte()), int(rr.byte())
+	b := &band{seen: rr.members(nSeen)}
+	b.reporters = rr.members(nRep)
+	return k, b
+}
+
+// decode loads a file written by Save into the (empty) store. While loading it enforces the caps
+// whenever a cap is exceeded by 10 %, so a file written under larger caps (another profile) cannot
+// make the load use more memory than the caps allow.
+func (s *Store) decode(r *bufio.Reader) error {
+	h := sha256.New()
+	rr := &recordReader{r: r, h: h}
+	head := rr.read(len(fileMagic) + 1 + 8)
+	if rr.err != nil || string(head[:4]) != fileMagic || head[4] != fileVersion || !hmac.Equal(head[5:13], s.keyCheck()) {
+		return errors.New("counter file belongs to another key or version")
+	}
+	nBands, nRefs := 0, 0
+	for {
+		kind := rr.byte()
+		if rr.err != nil {
+			return rr.err
+		}
+		switch kind {
+		case 'G':
+			k, b := rr.band()
+			if rr.err == nil {
+				s.global[k] = b
+				nBands++
+			}
+		case 'T':
+			id := rr.tenant()
+			k, b := rr.band()
+			if rr.err == nil {
+				s.tenantScope(id)[k] = b
+				nBands++
+			}
+		case 'R':
+			id := rr.tenant()
+			k := rr.key()
+			var ref mailRef
+			copy(ref.fp[:], rr.read(16))
+			for i := range ref.bands {
+				ref.bands[i] = rr.key()
+			}
+			ref.day = rr.day()
+			if rr.err == nil {
+				if s.refs[id] == nil {
+					s.refs[id] = map[key32]mailRef{}
+				}
+				s.refs[id][k] = ref
+				nRefs++
+			}
+		case 'P':
+			id := rr.tenant()
+			k := rr.key()
+			d := rr.day()
+			if rr.err == nil {
+				if s.reports[id] == nil {
+					s.reports[id] = map[key32]int32{}
+				}
+				s.reports[id][k] = d
+				nRefs++
+			}
+		case 'E':
+			sum := h.Sum(nil)
+			if !hmac.Equal(rr.read(32), sum) || rr.err != nil {
+				return errors.New("counter file checksum mismatch")
+			}
+			if _, err := r.ReadByte(); err != io.EOF {
+				return errors.New("trailing data after the counter file")
+			}
+			return nil
+		default:
+			return errors.New("unknown record type")
+		}
+		if rr.err != nil {
+			return rr.err
+		}
+		if nBands > s.MaxBands+s.MaxBands/10 || nRefs > s.MaxRefs+s.MaxRefs/10 {
+			s.enforceCapsLocked() // Open has not published the store yet: no lock needed
+			nBands, nRefs = s.countsLocked()
+		}
+	}
+}
+
+func (s *Store) countsLocked() (bands, refs int) {
+	bands = len(s.global)
+	for _, scope := range s.tenants {
+		bands += len(scope)
+	}
+	for _, m := range s.refs {
+		refs += len(m)
+	}
+	for _, m := range s.reports {
+		refs += len(m)
+	}
+	return bands, refs
 }
