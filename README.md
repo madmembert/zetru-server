@@ -1,4 +1,59 @@
-# Zetru analysis server: installation and operation
+# Zetru Server
+
+The self-hostable analysis server for **Zetru — ZeroTrust Mail**, the iPhone and iPad mail app that
+treats every incoming mail as unverified until there is evidence it is genuine. The app analyses
+every mail on the device; a paired server adds deeper checks (DKIM/DMARC re-verification, feeds,
+domain age, campaign counters, a text classifier) and returns signed findings. It never stores mail
+content, and it can only add findings: it can never make a mail look more trustworthy than the
+device itself can justify.
+
+| Repository | Content |
+|---|---|
+| `zetru` | iOS/iPadOS app, on-device security layer, concept (source of `docs/concept.md`) |
+| `zetru-server` (this one) | Gateway, lookup, analyzer, inference, updater and the Docker deployment |
+| `zetru-website` | Static product website |
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `gateway/` | Go (standard library only): TLS 1.3, device authentication, limits, campaign counters, signed responses; operator CLI. Decisions: `gateway/DECISIONS.md` |
+| `lookup/` | Go: RDAP domain age with a bounded cache |
+| `analyzer/` | Python: parses and analyses one mail per sandboxed worker. Decisions: `analyzer/DECISIONS.md` |
+| `inference/` | Python: typed decisions (rule tier, optional encoder and remote backends) |
+| `updater/` | Python: downloads, validates and publishes feeds and models |
+| `deploy/` | Docker Compose (profiles `pi` and `vps`), Unbound resolver, helper script, image pinning, egress firewall |
+| `contract/` | Shared test vectors with the app: signing fixtures (§4.4/§4.5) and URL canonicalisation (§11.4); see `contract/README.md` |
+| `docs/` | `concept.md` (copy from the app repository, its source) and `server-internal-api.md` (container interfaces) |
+| `tests/corpus/` | Crafted mail corpus for the analyzer's end-to-end tests |
+
+## Development and tests
+
+```bash
+# Go services (Go 1.25+)
+(cd gateway && go vet ./... && go test ./...)
+(cd lookup && go vet ./... && go test ./...)
+
+# Python services (Python 3.12, as in the images)
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt -r updater/requirements.txt
+.venv/bin/python -m pytest
+
+# Deployment checks
+sh deploy/pin-images.sh check
+docker compose -f deploy/docker-compose.yml config -q
+```
+
+The seccomp and `PR_SET_DUMPABLE` tests run on Linux only and are skipped elsewhere. Changes to the
+protocol, the URL canonicalisation, the concept or the brand pack go through the contract: regenerate
+the vectors (`contract/README.md`), then run `scripts/sync-server-contract.py --server <this checkout>`
+in the app repository and both test suites.
+
+Licence: proprietary, all rights reserved. Third-party Python packages and data are listed in
+`THIRD_PARTY_PYTHON.md`.
+
+## Installation and operation
+
 
 The Zetru server analyses mails that the Zetru app submits and returns signed findings. It stores
 no mail content. It runs as six containers on a Raspberry Pi 5 (8 GB) or a small VPS.
