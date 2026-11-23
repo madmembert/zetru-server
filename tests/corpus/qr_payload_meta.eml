@@ -1,0 +1,24 @@
+From: "IT Service" <it-service@example-firm.example>
+To: jane@example.org
+Subject: MFA re-enrolment required
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <15@example-firm.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============4159884361471867314=="
+
+--===============4159884361471867314==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Scan the code.
+
+--===============4159884361471867314==
+Content-Type: image/png
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="qr.png"
+MIME-Version: 1.0
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgAAACAAFUok9dAAAA
+AElFTkSuQmCC
+
+--===============4159884361471867314==--

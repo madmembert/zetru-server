@@ -1,0 +1,102 @@
+{
+  "manifest_version": 1,
+  "notes": [
+    "Default feeds of concept §6.7, all commercially usable. URLs and licences verified on 2026-11-22.",
+    "Only the hosts of these URLs are contacted; redirects are refused. A feed with commercial=false is refused unless ZETRU_ALLOW_NONCOMMERCIAL=1.",
+    "min/max bounds are sanity limits for the published entry count and the downloaded byte size."
+  ],
+  "feeds": [
+    {
+      "id": "psl",
+      "url": "https://publicsuffix.org/list/public_suffix_list.dat",
+      "format": "psl",
+      "file": "public_suffix_list.dat",
+      "licence": "MPL-2.0",
+      "commercial": true,
+      "attribution": "Public Suffix List (publicsuffix.org), Mozilla Public License 2.0",
+      "refresh_s": 86400,
+      "min_bytes": 100000,
+      "max_bytes": 5000000,
+      "min_entries": 5000,
+      "max_entries": 40000,
+      "never_list_guard": false
+    },
+    {
+      "id": "iana-tlds",
+      "url": "https://data.iana.org/TLD/tlds-alpha-by-domain.txt",
+      "format": "iana-tlds",
+      "file": "tlds.txt",
+      "licence": "IANA-public-data",
+      "commercial": true,
+      "attribution": null,
+      "refresh_s": 86400,
+      "min_bytes": 5000,
+      "max_bytes": 200000,
+      "min_entries": 1000,
+      "max_entries": 3000,
+      "never_list_guard": false
+    },
+    {
+      "id": "rdap-bootstrap",
+      "url": "https://data.iana.org/rdap/dns.json",
+      "format": "rdap-bootstrap",
+      "file": "dns.json",
+      "licence": "IANA-public-data",
+      "commercial": true,
+      "attribution": null,
+      "refresh_s": 86400,
+      "min_bytes": 10000,
+      "max_bytes": 2000000,
+      "min_entries": 300,
+      "max_entries": 3000,
+      "never_list_guard": false
+    },
+    {
+      "id": "certpl",
+      "url": "https://hole.cert.pl/domains/v2/domains.txt",
+      "format": "domains",
+      "file": "domains.txt",
+      "licence": "CERT-Polska-Warning-List",
+      "licence_note": "Data usage policy: may be used by any user for any purpose, including commercial purposes; attribution not required; no implied endorsement by NASK-PIB/CERT Polska.",
+      "commercial": true,
+      "attribution": null,
+      "refresh_s": 300,
+      "min_bytes": 10000,
+      "max_bytes": 100000000,
+      "min_entries": 1000,
+      "max_entries": 3000000,
+      "never_list_guard": true
+    },
+    {
+      "id": "majestic",
+      "url": "https://downloads.majestic.com/majestic_million.csv",
+      "format": "majestic",
+      "file": "domains.txt",
+      "licence": "CC-BY-3.0",
+      "commercial": true,
+      "attribution": "Majestic Million by Majestic (majestic.com), CC BY 3.0",
+      "refresh_s": 86400,
+      "min_interval_s": 86400,
+      "min_bytes": 10000000,
+      "max_bytes": 250000000,
+      "min_entries": 900000,
+      "max_entries": 1100000,
+      "never_list_guard": false
+    },
+    {
+      "id": "disposable",
+      "url": "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf",
+      "format": "domains",
+      "file": "domains.txt",
+      "licence": "CC0-1.0",
+      "commercial": true,
+      "attribution": null,
+      "refresh_s": 86400,
+      "min_bytes": 10000,
+      "max_bytes": 10000000,
+      "min_entries": 1000,
+      "max_entries": 500000,
+      "never_list_guard": true
+    }
+  ]
+}

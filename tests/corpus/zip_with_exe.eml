@@ -1,0 +1,36 @@
+From: "Versand" <versand@shop-beispiel.example>
+To: jane@example.org
+Subject: Your shipping documents
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <10@shop-beispiel.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============0233840962024109873=="
+
+--===============0233840962024109873==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello,
+
+please find the shipping documents for your order attached. Open the archive =
+and print the label before the courier arrives tomorrow morning.
+
+Best regards
+
+--===============0233840962024109873==
+Content-Type: application/zip
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="documents.zip"
+MIME-Version: 1.0
+
+UEsDBBQAAAAAAMBLdF2A/w4NDAEAAAwBAAAWAAAAU2hpcHBpbmdfTGFiZWwucGRmLmV4ZU1aAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAA
+AABQRQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQSwMEFAAAAAAAwEt0XehQpw4FAAAA
+BQAAAAoAAAByZWFkbWUudHh0bGFiZWxQSwECFAMUAAAAAADAS3RdgP8ODQwBAAAMAQAAFgAAAAAA
+AAAAAAAAgAEAAAAAU2hpcHBpbmdfTGFiZWwucGRmLmV4ZVBLAQIUAxQAAAAAAMBLdF3oUKcOBQAA
+AAUAAAAKAAAAAAAAAAAAAACAAUABAAByZWFkbWUudHh0UEsFBgAAAAACAAIAfAAAAG0BAAAAAA==
+
+--===============0233840962024109873==--

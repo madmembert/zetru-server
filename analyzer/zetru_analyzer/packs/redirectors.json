@@ -1,0 +1,31 @@
+{
+  "id": "zetru-redirectors",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "notes": [
+    "Open redirectors and link-protection wrappers whose destination is in the URL itself; unwrapped offline, never fetched (concept §6.5).",
+    "host: exact host, or a suffix when it starts with '.'; path: required path prefix; params: query parameters carrying the destination, first present wins; encoding: plain (percent-decoded once by the query parser), proofpoint-v2, urldefense-v3."
+  ],
+  "rules": [
+    {"host": "www.google.com", "path": "/url", "params": ["q", "url"], "encoding": "plain"},
+    {"host": "google.com", "path": "/url", "params": ["q", "url"], "encoding": "plain"},
+    {"host": "www.google.de", "path": "/url", "params": ["q", "url"], "encoding": "plain"},
+    {"host": "l.facebook.com", "path": "/l.php", "params": ["u"], "encoding": "plain"},
+    {"host": "lm.facebook.com", "path": "/l.php", "params": ["u"], "encoding": "plain"},
+    {"host": "l.instagram.com", "path": "/", "params": ["u"], "encoding": "plain"},
+    {"host": "www.youtube.com", "path": "/redirect", "params": ["q"], "encoding": "plain"},
+    {"host": ".safelinks.protection.outlook.com", "path": "/", "params": ["url"], "encoding": "plain"},
+    {"host": "urldefense.proofpoint.com", "path": "/v2/url", "params": ["u"], "encoding": "proofpoint-v2"},
+    {"host": "urldefense.com", "path": "/v3/", "params": [], "encoding": "urldefense-v3"},
+    {"host": "www.linkedin.com", "path": "/redir/redirect", "params": ["url"], "encoding": "plain"},
+    {"host": "slack-redir.net", "path": "/link", "params": ["url"], "encoding": "plain"},
+    {"host": "steamcommunity.com", "path": "/linkfilter/", "params": ["url", "u"], "encoding": "plain"},
+    {"host": "vk.com", "path": "/away.php", "params": ["to"], "encoding": "plain"},
+    {"host": "away.vk.com", "path": "/away.php", "params": ["to"], "encoding": "plain"},
+    {"host": "out.reddit.com", "path": "/", "params": ["url"], "encoding": "plain"},
+    {"host": "t.umblr.com", "path": "/redirect", "params": ["z"], "encoding": "plain"},
+    {"host": "href.li", "path": "/", "params": [], "encoding": "query-is-url"},
+    {"host": "linkprotect.cudasvc.com", "path": "/url", "params": ["a"], "encoding": "plain"}
+  ],
+  "review": ["linkprotect.cudasvc.com parameter name and href.li format believed correct; verify against real samples."]
+}

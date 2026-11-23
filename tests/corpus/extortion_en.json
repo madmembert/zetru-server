@@ -1,0 +1,6 @@
+{
+  "expect": [
+    "CLS_EXTORTION",
+    "CLS_CAT_SCAM"
+  ]
+}

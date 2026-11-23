@@ -1,0 +1,13 @@
+From: "PayPal" <service@paypal.com>
+To: jane@example.org
+Subject: Receipt for your payment
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <16@paypal.com>
+Return-Path: <bounce@mailer-cheap.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+You sent a payment of 249.00 USD to Online Store. If you did not make this pa=
+yment, please review your recent activity in your account at your earliest co=
+nvenience.

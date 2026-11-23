@@ -1,0 +1,28 @@
+From: "Scanner" <scanner@office-scan.example>
+To: anna@example.de
+Subject: Scan 2026-11-20
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <21@office-scan.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============1765199242547913198=="
+
+--===============1765199242547913198==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Gescanntes Dokument im Anhang. Diese Nachricht wurde automatisch von Ihrem Sc=
+anner erstellt, bitte antworten Sie nicht direkt auf diese Nachricht.
+
+--===============1765199242547913198==
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Scan_2026-11-20.pdf"
+MIME-Version: 1.0
+
+JVBERi0xLjQKMSAwIG9iaiA8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgL09wZW5BY3Rp
+b24gMyAwIFIgPj4gZW5kb2JqCjIgMCBvYmogPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFtdIC9Db3Vu
+dCAwID4+IGVuZG9iagozIDAgb2JqIDw8IC9TIC9KYXZhU2NyaXB0IC9KUyAoYXBwLmFsZXJ0XCgn
+aW5lcnQgdGVzdCdcKTspID4+IGVuZG9iagp0cmFpbGVyIDw8IC9Sb290IDEgMCBSID4+CiUlRU9G
+Cg==
+
+--===============1765199242547913198==--

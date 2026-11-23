@@ -1,0 +1,6 @@
+# Optional: only for the `encoder` backend (off by default). Install with the build argument
+# WITH_ENCODER=1. Versions must be pinned and their licences re-checked when a model is released (M8):
+# onnxruntime (MIT), tokenizers (Apache-2.0), numpy (BSD-3-Clause).
+onnxruntime
+tokenizers
+numpy

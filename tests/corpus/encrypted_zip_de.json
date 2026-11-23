@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "ATT_ENCRYPTED"
+  ],
+  "forbid": [
+    "ATT_ARCHIVE_RISKY"
+  ]
+}

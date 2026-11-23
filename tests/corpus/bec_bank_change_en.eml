@@ -1,0 +1,20 @@
+From: "Accounts Receivable" <ar@supplier-invoices.example>
+To: ap@example.com
+Subject: Updated banking details for outstanding invoices
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <4@supplier-invoices.example>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Dear customer,
+
+please note that our bank details have changed. All future payments and the o=
+utstanding invoice should be sent to our new account with immediate effect.
+
+New IBAN: GB29 NWBK 6016 1331 9268 19
+
+Please reply to this email once you have updated your records.
+
+Kind regards
+Accounts team

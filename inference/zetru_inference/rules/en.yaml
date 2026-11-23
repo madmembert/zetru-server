@@ -1,0 +1,274 @@
+# Zetru rule tier, English (concept §9.4). Same conventions as de.yaml.
+version: rules-1.1.0
+language: en
+
+cta:
+  link:
+    - '\[link\]'
+    - '\bclick (?:here|below|on|the|this)\b'
+    - '\btap (?:here|below|on|the)\b'
+    - '\b(?:follow|use|open|visit) (?:the|this) (?:link|button|page)\b'
+    - '\b(?:link|button) below\b'
+    - '\bvia the (?:link|button|portal)\b'
+    - '\b(?:log|sign) ?in (?:here|now|below|at)\b'
+    - '\b(?:verify|confirm|update|review|view|check) (?:now|here)\b'
+    - '\bqr ?code\b'
+    - '\bvisit (?:our|the) (?:website|site|portal|page)\b'
+  reply:
+    - '\breply\b'
+    - '\brespond\b'
+    - '\bget back to me\b|\blet me know\b|\bemail me\b|\bwrite (?:to|back)\b'
+    - '\bcontact (?:us|me)\b'
+    - '\bsend (?:us|me)\b'
+  attachment:
+    - '\battached\b|\battachment\b|\benclosed\b'
+    - '\bopen the (?:file|document|attachment)\b'
+
+questions:
+  asks_credentials:
+    groups:
+      action:
+        - '\bverify\b|\bverification\b|\bverifying\b'
+        - '\bconfirm\w*'
+        - '\bupdate\b|\bupdating\b'
+        - '\bvalidate\b|\bre-?enter\b|\bre-?submit\b'
+        - '\b(?:enter|provide|submit|supply) (?:your|the|all)\b'
+        - '\b(?:log|sign) ?(?:in|on)\b|\blogin\b'
+        - '\brestore\b|\breactivate\b|\bunlock\b|\breinstate\b'
+        - '\bcomplete (?:your|the) (?:verification|profile|details|information)\b'
+        - '\breview (?:your|the) (?:account|information|details)\b'
+      object:
+        - '\bpassword\w*|\bpasscode\b|\bcredentials?\b|\blogin (?:details|information|data)\b|\busername\b'
+        - '\baccount (?:information|details|data|access)\b|\byour account\b|\bmailbox\b|\bemail account\b'
+        - '\bbilling (?:information|details|address)\b|\bpayment (?:information|details|method)\b'
+        - '\bcard (?:details|number|information|data)\b|\bcredit card\b|\bcvv\b|\bcvc\b|\bsecurity code\b|\bpin\b'
+        - '\bsocial security number\b|\bssn\b|\bidentity\b|\bid document\b|\bpassport\b|\bdriver.?s licen[cs]e\b'
+        - '\bpersonal (?:information|details|data)\b|\bdate of birth\b|\bbank (?:details|account|login)\b'
+        - '\bapple id\b|\bdelivery address\b|\bshipping address\b'
+      problem:
+        - '\bsuspended\b|\bsuspension\b|\blocked\b|\bdisabled\b|\bdeactivated\b|\bon hold\b'
+        - '\b(?:account|access|card)\b.{0,25}\b(?:limited|restricted)\b|\blimited (?:access|functionality)\b'
+        - '\bunusual (?:activity|sign-?in|login|access)\b|\bsuspicious\b|\bunauthori[sz]ed\b'
+        - '\bsecurity (?:reasons|check|alert|review|measure|update)\b'
+        - '\bexpired?\b|\bwill expire\b|\bexpiring\b|\bout of date\b|\boutdated\b'
+        - '\bfailed (?:payment|delivery|verification)\b|\bcould not be (?:delivered|processed)\b|\bdelivery (?:attempt|failed)\b'
+        - '\bincomplete\b|\bcompliance\b|\bnew (?:regulation|policy|requirement)s?\b'
+    suppress:
+      - '\b(?:confirm|verify) your (?:e-?mail(?: address)?|subscription|sign-?up)\b'
+      - '\bnewsletter\b'
+      - '\bopt-?in\b'
+      - '\bcomplete your registration\b'
+      - '\bwe will never ask\b|\bnever share your\b|\bnever ask (?:you )?for\b'
+
+  asks_payment:
+    groups:
+      verb:
+        - '\bpay\b|\bpayment\b|\bpaying\b|\bremit\w*'
+        - '\btransfer\b|\bwire\b|\bsend (?:the |us )?(?:money|funds|payment|amount)\b'
+        - '\bsettle\b|\bclear (?:the|your) (?:balance|invoice|debt)\b'
+        - '\b(?:buy|purchase|get)\b.{0,30}\b(?:gift ?cards?|vouchers?|itunes|google play|steam)\b'
+      instrument:
+        - '(?:\$|£|€|usd|gbp|eur)\s?\d'
+        - '(?<!\d)\d{1,9}(?:[.,]\d{2})?\s?(?:usd|gbp|eur|dollars?|pounds?|euros?)\b'
+        - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}|\bsort code\b|\brouting number\b|\baccount number\b'
+        - '\bgift ?cards?\b|\bvouchers?\b|\bitunes\b|\bgoogle play\b|\bsteam (?:card|wallet)\b|\bpaysafecard\b'
+        - '\bbitcoin\w*|\bbtc\b|\bcrypto\w*|\bwallet\b|\busdt\b'
+      object:
+        - '\binvoice\w*|\boutstanding\b|\bbalance\b|\boverdue\b|\bunpaid\b|\barrears\b'
+        - '\bfee\b|\bfees\b|\bcustoms\b|\bduty\b|\bshipping (?:fee|charge)\b|\bpenalty\b|\bfine\b|\bdebt\b|\bcollection\b'
+    suppress:
+      - '\bdirect debit\b|\bauto-?pay\b|\bwill be (?:automatically )?(?:charged|debited)\b'
+      - '\balready (?:paid|been paid)\b|\bno (?:further )?action (?:is )?(?:required|needed)\b'
+      - '\bpayment (?:received|confirmed|was successful)\b|\bthank you for your payment\b|\bwe (?:have )?received your payment\b'
+    extra_cta:
+      - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}|\bsort code\b|\brouting number\b'
+      - '\bwallet address\b|\bbitcoin address\b'
+
+  asks_bank_change:
+    groups:
+      change:
+        - '\bnew (?:bank|banking) (?:details|account|information)\b|\bupdated (?:bank|banking) (?:details|information)\b'
+        - '\b(?:bank|banking) (?:details|account|information)\b.{0,40}\b(?:changed|updated|moved|switched)\b'
+        - '\bchanged (?:our|my) (?:bank|banking|account)\b|\bnew (?:account|iban)\b'
+        - '\b(?:old|previous|former) (?:bank )?account\b.{0,40}\b(?:no longer|closed|frozen|under audit)\b'
+        - '\bno longer (?:use|accept|active)\b|\bno longer\b.{0,30}\b(?:old|previous|former) (?:bank )?account\b'
+        - '\bnew (?:\w+ )?(?:bank )?account\b'
+      detail:
+        - '\biban\b|\bbic\b|\bswift\b|\bsort code\b|\brouting number\b|\baccount number\b'
+        - '\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}'
+      future:
+        - '\b(?:all )?future (?:payments|invoices|transfers|remittances)\b|\bgoing forward\b|\bfrom now on\b'
+        - '\b(?:next|upcoming|pending|outstanding) (?:payment|invoice|transfer)s?\b|\beffective (?:immediately|today)\b'
+        - '\bfrom (?:the )?\d{1,2}(?:st|nd|rd|th)? (?:of )?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*'
+    extra_cta:
+      - '\biban\b|\b[a-z]{2}\d{2}(?: ?[a-z0-9]{4}){3,}|\bsort code\b|\brouting number\b'
+
+  urgency_pressure:
+    groups:
+      deadline:
+        - '\bwithin (?:\d+|twenty-four|forty-eight|24|48|72) (?:hours|hrs|days)\b'
+        - '\bin the next \d+ (?:hours|days)\b|\bby (?:today|tomorrow|end of (?:the )?day)\b'
+        - '\bimmediately\b|\burgent(?:ly)?\b|\bas soon as possible\b|\basap\b|\bright away\b|\bwithout delay\b'
+        - '\bfinal (?:notice|warning|reminder|chance)\b|\blast (?:chance|warning|notice)\b|\bdeadline\b'
+        - '\b(?:24|48|72) hours\b|\bexpires? (?:today|soon|tomorrow)\b'
+        - '\b(?:act|respond|reply|pay|call) (?:today|now|immediately|right away)\b'
+      consequence:
+        - '\bsuspended\b|\bsuspension\b|\bclosed\b|\bclosure\b|\bterminated\b|\btermination\b|\bdeleted\b|\bdeletion\b'
+        - '\blocked\b|\bdisabled\b|\bdeactivated\b|\bpermanently\b|\blose (?:access|your)\b|\bforfeit\w*'
+        - '\blate (?:fee|charge)s?\b|\bpenalt(?:y|ies)\b|\bcollections?\b|\bdebt collector\b'
+        - '\blegal action\b|\blawsuit\b|\barrest\b|\bwarrant\b|\bprosecution\b|\bcourt\b'
+        - '\breturned to (?:sender|the sender)\b|\bdestroyed\b'
+      pressure:
+        - '\bact now\b|\baction required\b|\bimmediate action\b|\bdo not ignore\b'
+        - '\bimportant\b|\bwarning\b|\battention\b'
+    suppress:
+      - '\btoday only\b.{0,40}\b(?:off|sale|discount|deal|%)\b'
+      - '\b(?:sale|discount|deal|offer)\b.{0,30}\b(?:ends|expires)\b'
+
+  asks_secrecy:
+    groups:
+      secrecy:
+        - '\bconfidential\w*|\bdiscreet\w*|\bdiscretion\b|\bsecret\b|\bprivately\b'
+        - '\b(?:don.?t|do not) (?:tell|mention|discuss|share)\b|\bkeep (?:this|it) (?:between us|to yourself|quiet)\b'
+        - '\bbetween (?:you and me|us)\b|\bno one (?:else )?(?:should|must|needs to) know\b'
+      bypass:
+        - '\b(?:can.?t|cannot|unable to) (?:talk|take calls?|answer calls?)\b|\bdon.?t call\b|\bdo not call\b'
+        - '\b(?:in|into|stuck in) (?:a|an) (?:meeting|conference|board meeting)\b'
+        - '\bonly (?:by|via|through) (?:e-?mail|text|whatsapp)\b|\bpersonal (?:e-?mail|number|phone)\b|\bwhatsapp\b'
+        - '\b(?:outside|bypass|skip) (?:the )?(?:usual|normal|standard) (?:process|channels?|approval)\b'
+      request:
+        - '\b(?:can|could) you\b|\bi need (?:you|a favou?r|your help)\b|\ba quick favou?r\b'
+        - '\bare you (?:available|at your desk|around|free)\b'
+        - '\bgift ?cards?\b|\bwire transfer\b|\bpayment\b'
+
+  impersonates_brand_or_authority:
+    groups:
+      brand:
+        - '\bpaypal\b|\bamazon\b|\bdhl\b|\bfedex\b|\bups\b|\busps\b|\broyal mail\b|\bevri\b|\bdpd\b'
+        - '\bmicrosoft\b|\boffice ?365\b|\boutlook\b|\bonedrive\b|\bsharepoint\b|\bapple\b|\bicloud\b|\bgoogle\b|\bnetflix\b|\bspotify\b|\bdisney\+'
+        - '\bwhatsapp\b|\bfacebook\b|\binstagram\b|\blinkedin\b|\bdocusign\b|\bdropbox\b|\bwetransfer\b|\badobe\b|\bebay\b|\bklarna\b'
+        - '\bhsbc\b|\bbarclays\b|\blloyds\b|\bnatwest\b|\bsantander\b|\bchase\b|\bbank of america\b|\bwells fargo\b|\brevolut\b|\bwise\b'
+        - '\bvisa\b|\bmastercard\b|\bamerican express\b|\bamex\b|\bcoinbase\b|\bbinance\b|\bmetamask\b|\bnorton\b|\bmcafee\b|\bgeek squad\b'
+        - '\bhmrc\b|\birs\b|\bfbi\b|\binterpol\b|\beuropol\b|\bdvla\b|\bnhs\b|\btv licensing\b|\bsocial security administration\b'
+        - '\bpolice\b|\bcustoms\b|\btax (?:office|authority|department)\b|\bgovernment\b|\bgov\.uk\b'
+      self:
+        - '\byour .{0,25}(?:team|support|service|customer care)\b'
+        - '\bcustomer (?:service|support|care)\b|\bsecurity (?:team|department|center|centre)\b|\bsupport team\b|\bhelp ?desk\b'
+        - '\bwe at\b|\bon behalf of\b|\bofficial\w*\b|\bdepartment\b|\bagency\b|\bauthorit(?:y|ies)\b'
+      official:
+        - '\bcase (?:number|id|reference)\b|\breference (?:number|no)\b|\bticket (?:number|id)\b|\bcustomer (?:number|id)\b'
+        - '\btracking (?:number|id)\b|\border (?:number|id)\b|\bnotice of\b|\binvestigation\b'
+
+  asks_callback:
+    groups:
+      call:
+        - '\bcall (?:us|our|the|this|me|now|immediately|back)\b|\bgive us a call\b|\bcall\b.{0,20}\b(?:at|on)\b'
+        - '\bphone (?:us|our)\b|\bdial\b|\breach (?:us|our .{0,20}) (?:at|on)\b|\bhelpline\b|\bhotline\b|\btoll-?free\b'
+        - '\bspeak (?:to|with) (?:a|an|our) (?:agent|representative|specialist|advisor)\b'
+      phone: []
+      context:
+        - '\bcancel\w*|\brefund\w*|\bdispute\b|\breverse\b|\breversal\b'
+        - '\bnot (?:authori[sz]ed|made|placed|recogni[sz]ed) by you\b|\bif you did not\b|\bif you didn.?t\b'
+        - '\b(?:has|have) been (?:charged|debited|renewed)\b|\bauto-?renew\w*|\brenewal\b|\bsubscription\b'
+        - '\bcharged\b|\bdeducted\b|\b24/7\b|\bfree of charge\b'
+    suppress:
+      - '(?:\bif you have (?:any )?questions\b|\bfor (?:any )?(?:questions|queries|enquiries)\b|\bquestions\?|\bfeel free to\b)[^.!?;]{0,80}'
+
+  asks_code_or_command:
+    groups:
+      code:
+        - '\b(?:enter|type|input) (?:the |this |the following |following )?code\b'
+      device_login:
+        - '\bdevicelogin\b|\bmicrosoft\.com/link\b|\bdevice ?code\b|\bdevice login\b'
+        - '\b(?:verification|security|one-?time|sms|otp) code\b.{0,40}\b(?:send|share|tell|give|read|provide)\b'
+        - '\b(?:send|share|tell|give|read) (?:us|me)\b.{0,30}\b(?:code|otp)\b'
+      keys:
+        - '\bwindows key\b|\bwin ?\+ ?r\b|\bwindows ?\+ ?r\b|\brun dialog\b'
+        - '\bctrl ?\+ ?v\b|\bcmd ?\+ ?v\b'
+      command:
+        - '\bpaste\b'
+        - '\bpowershell\b|\bcommand prompt\b|\bterminal\b|\bcmd\b'
+        - '\b(?:copy|run|execute) (?:the|this|following) (?:command|script)\b|\bcommand\b'
+        - '\bmshta\b|\binvoke-\w+|\biwr\b|\bcurl\b'
+      remote:
+        - '\banydesk\b|\bteamviewer\b|\bquick ?support\b|\bultraviewer\b|\brustdesk\b|\bscreenconnect\b|\bsupremo\b'
+        - '\bremote (?:access|desktop|support|control|session)\b'
+        - '\binstall\b|\bdownload\b'
+      approve:
+        - '\b(?:approve|accept|allow) (?:the|this) (?:sign-?in|login|request|prompt)\b'
+        - '\btap (?:approve|yes)\b'
+      approve_channel:
+        - '\bauthenticator\b|\bpush notification\b|\bpush (?:alert|prompt)\b'
+    extra_cta:
+      - '\bwin ?\+ ?r\b|\bwindows key\b|\bctrl ?\+ ?v\b|\bpaste\b'
+      - '\b(?:install|download)\b'
+      - '\benter\b.{0,30}\bcode\b'
+
+  extortion:
+    groups:
+      claim:
+        - '\b(?:i|we) (?:have )?(?:hacked|accessed|recorded|installed|infected)\b'
+        - '\b(?:your|ur) (?:device|computer|phone|account|system)\b.{0,30}\b(?:hacked|compromised|infected)\b'
+        - '\bmalware\b|\btrojan\b|\bspyware\b|\brat\b|\bkeylogger\b'
+        - '\bwebcam\b|\bcamera\b|\badult (?:site|website|content|videos?)\b|\bporn\w*|\bmasturbat\w*'
+        - '\byour password (?:is|was)\b|\bcompromising\b|\bintimate (?:videos?|photos?|images?)\b'
+      threat:
+        - '\b(?:to )?all (?:of )?your contacts\b'
+        - '\bpublish\w*|\bleak\w*|\bexpose\b|\bshare (?:it|the video|the recording)\b|\bruin\w*|\bdestroy\w*'
+        - '\b(?:family|friends|colleagues|employer)\b.{0,40}\b(?:send|see|know|receive)\b'
+      demand:
+        - '\bbitcoin\w*|\bbtc\b|\bcrypto\w*|\bwallet\b'
+        - '(?:\$|€|£)\s?\d|\b\d+ ?(?:usd|eur|euros?|dollars?)\b'
+        - '\b(?:pay|send|transfer)\b'
+        - '\bwithin (?:\d+|48|24) (?:hours|days)\b'
+    extra_cta:
+      - '\bwallet\b|\bbitcoin address\b|\bbtc address\b'
+
+  shared_document_lure:
+    groups:
+      share:
+        - '\b(?:has )?shared (?:a|an|the|some|\d+) .{0,40}(?:with you)?\b'
+        - '\bshared with you\b|\bsent you (?:a|an|some)\b|\bhas sent you\b|\b(?:has|have) been (?:sent|shared|delivered) (?:to|with) you\b'
+        - '\bnew (?:voicemail|voice message|fax|message)\b|\byou have (?:a|an|\d+) (?:new )?(?:voicemail|voice message|fax|documents?|files?)\b'
+        - '\b(?:waiting|pending) for your (?:review|signature)\b|\bfor (?:your )?(?:signature|review)\b'
+      view:
+        - '\b(?:view|open|review|access|download|listen to) (?:the )?(?:document|file|pdf|message|voicemail|invoice)s?\b'
+        - '\b(?:view|open|access) (?:now|here)\b|\breview and sign\b|\bplay (?:the )?(?:message|recording)\b'
+      doc:
+        - '\bdocuments?\b|\bfiles?\b|\bpdf\b|\bfolder\b'
+        - '\bdocusign\b|\bsharepoint\b|\bonedrive\b|\bdropbox\b|\bwetransfer\b|\bgoogle (?:drive|docs)\b|\badobe\b'
+        - '\bvoicemail\b|\bvoice message\b|\bfax\b'
+
+  scam:
+    groups:
+      story:
+        - '\binheritance\b|\bestate\b|\bdeceased\b|\bnext of kin\b|\bwidow\b|\borphan\w*'
+        - '\bdiplomat\w*|\bbarrister\b|\battorney\b|\blawyer\b|\bbank manager\b|\bprince\b|\bcharity\b|\bdonat\w*'
+        - '\blottery\b|\blotto\b|\bsweepstake\w*|\braffle\b|\bjackpot\b|\bwinners?\b|\byou (?:have )?won\b|\bselected (?:as|to receive)\b'
+        - '\btrading\b|\btrading platform\b|\bforex\b|\bcrypto\w*|\binvest\w*|\bpassive income\b|\bmake money\b'
+        - '\bearn\b.{0,30}\b(?:per|a|each) (?:day|week|month)\b'
+      money:
+        - '\bmillion\b|\bmillions\b'
+        - '(?:\$|£|€)\s?\d{1,3}(?:,\d{3})+|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})? ?(?:usd|dollars|euros|gbp|pounds)\b'
+        - '\bguaranteed (?:returns?|profits?|income)\b|\breturns? of \d+|\b\d+ ?% (?:returns?|profit)\b'
+        - '\bprize money\b|\bfortune\b|\blump sum\b'
+      claim:
+        - '\bbeneficiar\w*|\byou are (?:entitled|eligible)\b|\btax refund\b|\bcompensation\b'
+        - '\b(?:funds?|money|payment|refund|prize|winnings|amount|sum)\b.{0,40}\b(?:waiting|awaiting|ready|released|approved|pending)\b'
+        - '\bclaim (?:your|the)\b|\bpayout\b|\bto receive (?:your|the) (?:funds|money|payment|prize|refund|winnings)\b'
+        - '\bprocessing fee\b|\brelease fee\b|\bclearance fee\b|\b(?:transfer|release) (?:of )?(?:the )?(?:funds|sum|amount|fortune)\b'
+        - '\brisk-?free\b|\bno risk\b|\btrustworthy (?:person|partner)\b'
+    extra_cta:
+      - '\bwallet\b|\bbitcoin address\b|\biban\b'
+
+  spam:
+    groups:
+      offer:
+        - '\b\d+ ?% off\b|\bdiscount\w*|\bspecial offer\b|\bdeal of the day\b|\bbargain\b|\bclearance\b'
+        - '\bfree\b|\blimited (?:time|offer|stock)\b|\bwhile (?:stocks|supplies) last\b'
+      topic:
+        - '\bviagra\b|\bcialis\b|\berectile\b|\bweight loss\b|\blose weight\b|\bdiet pills?\b|\bketo\b'
+        - '\bcasino\w*|\bfree spins\b|\bbetting\b|\bpayday loans?\b|\bbad credit\b|\bdebt relief\b'
+        - '\bsingles\b|\bhookups?\b|\bdating\b|\bbacklinks?\b|\bseo services?\b|\bwork from home\b|\breplica\w*'
+      buy:
+        - '\b(?:buy|order|shop) now\b|\bget (?:yours|it) now\b|\bclaim your (?:discount|offer|free)\b'

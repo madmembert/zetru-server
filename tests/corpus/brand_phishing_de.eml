@@ -1,0 +1,38 @@
+From: "PayPal Kundenservice" <service@paypa1-sicherheit.com>
+To: anna@example.de
+Subject: Ihr Konto wurde =?utf-8?q?eingeschr=C3=A4nkt?=
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <1@paypa1-sicherheit.com>
+Return-Path: <bounce@paypa1-sicherheit.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============2967104688889862763=="
+
+--===============2967104688889862763==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Sehr geehrter Kunde,
+
+aufgrund ungew=C3=B6hnlicher Aktivit=C3=A4ten wurde Ihr Konto vor=C3=BCbergeh=
+end eingeschr=C3=A4nkt. Bitte best=C3=A4tigen Sie Ihre Zugangsdaten innerhalb=
+ von 24 Stunden, sonst wird Ihr Konto dauerhaft gesperrt.
+
+https://paypal-konto.example.net/login
+
+Ihr PayPal-Team
+
+--===============2967104688889862763==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body><p>Sehr geehrter Kunde,</p>
+<p>aufgrund ungew=C3=B6hnlicher Aktivit=C3=A4ten wurde Ihr Konto vor=C3=BCber=
+gehend eingeschr=C3=A4nkt. Bitte best=C3=A4tigen Sie Ihre
+Zugangsdaten innerhalb von 24 Stunden, sonst wird Ihr Konto dauerhaft gesperr=
+t.</p>
+<p><a href=3D"https://paypal-konto.example.net/login">paypal.com/konto</a></p=
+><p>Ihr PayPal-Team</p></body></html>
+
+--===============2967104688889862763==--

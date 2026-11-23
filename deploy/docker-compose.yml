@@ -1,0 +1,332 @@
+# Zetru analysis server (concept §3.2, §3.5; docs/server-internal-api.md).
+#
+# One file, two size profiles. Select exactly one, e.g. in .env:  COMPOSE_PROFILES=pi   (or vps)
+# then:  docker compose up -d --build      (see README.md and ./zetru-server)
+#
+# Six containers run per profile: gateway, analyzer, inference, resolver, updater, lookup.
+# Services that differ between the profiles exist twice (…-pi, …-vps); the network aliases give
+# them the host names of the internal API (gateway, analyzer, inference).
+#
+# Every container: non-root, read-only root file system, all capabilities dropped,
+# no-new-privileges, memory/CPU/pids limits, healthcheck, no Docker socket, no privileged mode,
+# no host networking, core dumps off, json-file logs capped at 10 MB x 3.
+#
+# Networks (GO-16): one internal network per pair of containers that talk to each other, so no
+# container reaches a service it does not use: gateway <-> analyzer, analyzer <-> inference,
+# analyzer <-> lookup, analyzer -> resolver. Only "edge" (the published port) and "egress" are not
+# internal; gateway-egress-firewall.sh optionally drops connections the gateway opens on "edge".
+
+name: zetru
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  ulimits:
+    core: 0
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-gateway: &gateway
+  <<: *hardening
+  build:
+    context: ../gateway
+  image: zetru/gateway:1.0.0
+  user: "10001:10001"
+  command: ["serve"]
+  ports:
+    - "${ZETRU_BIND_ADDRESS:-0.0.0.0}:${ZETRU_PORT:-8443}:8443"
+  networks:
+    edge: {}
+    gw-analyzer: {}
+  volumes:
+    - gateway-data:/data
+  # §14.2. Compose drops a swappiness of 0 as "unset"; what actually keeps this container out of
+  # swap is memswap_limit = memory limit in the services below.
+  mem_swappiness: 0
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/zetru-gateway", "healthcheck"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 15s
+
+x-analyzer: &analyzer
+  <<: *hardening
+  build:
+    context: ../analyzer
+    dockerfile: Dockerfile
+  image: zetru/analyzer:1.0.0
+  user: "10002:10002"
+  networks:
+    gw-analyzer:
+      aliases: [analyzer]
+    analyzer-inference: {}
+    analyzer-lookup: {}
+    dns: {}
+  volumes:
+    - feeds:/feeds:ro
+  tmpfs:
+    # Nothing in the analyzer writes files and the workers' seccomp filter refuses file creation; the tiny
+    # /tmp only keeps a stray library call from failing on a read-only root (Python review, compose item 1).
+    - /tmp:size=1m,mode=1777,noexec,nosuid,nodev
+  mem_swappiness: 0   # see the gateway: memswap_limit is the effective no-swap control
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/internal/healthz', timeout=4).status == 200 else 1)"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 60s
+
+x-inference: &inference
+  <<: *hardening
+  build:
+    context: ../inference
+    dockerfile: Dockerfile
+  image: zetru/inference:1.0.0
+  user: "10003:10003"
+  networks:
+    analyzer-inference:
+      aliases: [inference]
+  volumes:
+    - models:/models:ro
+  tmpfs:
+    - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+  mem_swappiness: 0
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8082/healthz', timeout=4).status == 200 else 1)"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 120s
+
+services:
+  # ---------------------------------------------------------------- gateway (Go, public)
+  gateway-pi:
+    <<: *gateway
+    profiles: ["pi"]
+    environment:
+      ZETRU_PROFILE: pi
+      ZETRU_DATA_DIR: /data
+      ZETRU_LISTEN: ":8443"
+      ZETRU_ANALYZER_URL: http://analyzer:8081
+      ZETRU_REQUEST_LOG: ${ZETRU_REQUEST_LOG:-file}
+      GOMEMLIMIT: 200MiB
+    memswap_limit: 256m
+    deploy:
+      resources:
+        limits: {memory: 256m, cpus: "1.0", pids: 64}
+    depends_on:
+      analyzer-pi: {condition: service_started}
+
+  gateway-vps:
+    <<: *gateway
+    profiles: ["vps"]
+    environment:
+      ZETRU_PROFILE: vps
+      ZETRU_DATA_DIR: /data
+      ZETRU_LISTEN: ":8443"
+      ZETRU_ANALYZER_URL: http://analyzer:8081
+      ZETRU_REQUEST_LOG: ${ZETRU_REQUEST_LOG:-file}
+      GOMEMLIMIT: 420MiB
+    memswap_limit: 512m
+    deploy:
+      resources:
+        limits: {memory: 512m, cpus: "2.0", pids: 128}
+    depends_on:
+      analyzer-vps: {condition: service_started}
+
+  # ---------------------------------------------------------------- analyzer (Python, no egress)
+  analyzer-pi:
+    <<: *analyzer
+    profiles: ["pi"]
+    environment:
+      ZETRU_PROFILE: pi
+      ZETRU_WORKERS: "2"
+      ZETRU_QUEUE: "8"
+      ZETRU_INFERENCE_URL: http://inference:8082
+      ZETRU_LOOKUP_URL: http://lookup:8083
+      ZETRU_RESOLVER_HOST: resolver
+    memswap_limit: 2g
+    deploy:
+      resources:
+        limits: {memory: 2g, cpus: "3.0", pids: 64}
+    depends_on:
+      updater: {condition: service_started}
+      inference-pi: {condition: service_started}
+      lookup: {condition: service_started}
+      resolver: {condition: service_started}
+
+  analyzer-vps:
+    <<: *analyzer
+    profiles: ["vps"]
+    environment:
+      ZETRU_PROFILE: vps
+      ZETRU_WORKERS: "4"
+      ZETRU_QUEUE: "32"
+      ZETRU_INFERENCE_URL: http://inference:8082
+      ZETRU_LOOKUP_URL: http://lookup:8083
+      ZETRU_RESOLVER_HOST: resolver
+    memswap_limit: 4g
+    deploy:
+      resources:
+        limits: {memory: 4g, cpus: "4.0", pids: 128}
+    depends_on:
+      updater: {condition: service_started}
+      inference-vps: {condition: service_started}
+      lookup: {condition: service_started}
+      resolver: {condition: service_started}
+
+  # ---------------------------------------------------------------- inference (Python, analyzer only)
+  inference-pi:
+    <<: *inference
+    profiles: ["pi"]
+    environment:
+      ZETRU_PROFILE: pi
+      ZETRU_ALLOW_NONCOMMERCIAL: ${ZETRU_ALLOW_NONCOMMERCIAL:-0}
+    memswap_limit: 1536m
+    deploy:
+      resources:
+        limits: {memory: 1536m, cpus: "2.0", pids: 32}
+    depends_on:
+      updater: {condition: service_started}
+
+  inference-vps:
+    <<: *inference
+    profiles: ["vps"]
+    environment:
+      ZETRU_PROFILE: vps
+      ZETRU_ALLOW_NONCOMMERCIAL: ${ZETRU_ALLOW_NONCOMMERCIAL:-0}
+    memswap_limit: 2560m
+    deploy:
+      resources:
+        limits: {memory: 2560m, cpus: "3.0", pids: 64}
+    depends_on:
+      updater: {condition: service_started}
+
+  # ---------------------------------------------------------------- resolver (Unbound)
+  resolver:
+    <<: *hardening
+    profiles: ["pi", "vps"]
+    build:
+      context: ./resolver
+    image: zetru/resolver:1.0.0
+    user: "10004:10004"
+    environment:
+      ZETRU_DNS_SUBNET: ${ZETRU_DNS_SUBNET:-172.30.53.0/24}
+    networks:
+      dns:
+        aliases: [resolver]
+      egress: {}
+    tmpfs:
+      - /run/unbound:size=8m,mode=0700,uid=10004,gid=10004,noexec,nosuid,nodev
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"   # bind port 53 without CAP_NET_BIND_SERVICE
+    deploy:
+      resources:
+        limits: {memory: 192m, cpus: "0.5", pids: 32}
+    healthcheck:
+      test: ["CMD", "drill", "@127.0.0.1", "localhost", "A"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------- updater (Python, egress only)
+  updater:
+    <<: *hardening
+    profiles: ["pi", "vps"]
+    build:
+      context: ../updater
+      dockerfile: Dockerfile
+    image: zetru/updater:1.0.0
+    user: "10005:10005"
+    environment:
+      ZETRU_ALLOW_NONCOMMERCIAL: ${ZETRU_ALLOW_NONCOMMERCIAL:-0}
+    networks:
+      egress: {}
+    volumes:
+      - feeds:/feeds
+      - models:/models
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev   # downloads are staged in /feeds/.staging (ZETRU_STAGING_DIR)
+    deploy:
+      resources:
+        limits: {memory: 512m, cpus: "0.5", pids: 64}
+    healthcheck:
+      # Healthy once the Public Suffix List feed is published and younger than 3 days.
+      test: ["CMD", "python3", "-c", "import json, sys, time; d = json.load(open('/feeds/psl/current.json')); sys.exit(0 if time.time() - d['fetched_at'] < 3 * 86400 else 1)"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 15m
+
+  # ---------------------------------------------------------------- lookup (Go, RDAP over HTTPS)
+  lookup:
+    <<: *hardening
+    profiles: ["pi", "vps"]
+    build:
+      context: ../lookup
+    image: zetru/lookup:1.0.0
+    user: "10006:10006"
+    command: ["serve"]
+    environment:
+      ZETRU_LOOKUP_CACHE_DIR: /cache
+      ZETRU_LOOKUP_LISTEN: ":8083"
+      ZETRU_RDAP_RATE: ${ZETRU_RDAP_RATE:-1}
+      ZETRU_RDAP_BURST: ${ZETRU_RDAP_BURST:-6}
+      GOMEMLIMIT: 100MiB
+    networks:
+      analyzer-lookup:
+        aliases: [lookup]
+      egress: {}
+    volumes:
+      - lookup-cache:/cache
+    deploy:
+      resources:
+        limits: {memory: 128m, cpus: "0.25", pids: 32}
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zetru-lookup", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  # Public side: the only published port (gateway 8443). Not internal (a published port needs a
+  # routed network); the fixed bridge name lets gateway-egress-firewall.sh drop connections the
+  # gateway would open (concept §3.2: inbound only).
+  edge:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: zetru-edge
+  # Internal networks, one per pair of containers that talk to each other. No route to the outside.
+  gw-analyzer:
+    driver: bridge
+    internal: true
+  analyzer-inference:
+    driver: bridge
+    internal: true
+  analyzer-lookup:
+    driver: bridge
+    internal: true
+  # Analyzer -> resolver only. The fixed subnet is what Unbound's access-control allows.
+  dns:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ZETRU_DNS_SUBNET:-172.30.53.0/24}
+  # Internet access for resolver, updater and lookup.
+  egress:
+    driver: bridge
+
+volumes:
+  gateway-data: {}   # keys, registry, counters, request logs (gateway only)
+  feeds: {}          # written by updater, read-only for analyzer
+  models: {}         # written by updater, read-only for inference
+  lookup-cache: {}   # RDAP cache (lookup only)

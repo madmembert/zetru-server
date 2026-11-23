@@ -1,0 +1,30 @@
+From: =?utf-8?q?Steuerb=C3=BCro?= <kanzlei@steuer-beispiel.example>
+To: anna@example.de
+Subject: Unterlagen
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <19@steuer-beispiel.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============0966472325525269662=="
+
+--===============0966472325525269662==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hallo,
+
+die Unterlagen finden Sie im passwortgesch=C3=BCtzten Archiv im Anhang. Das P=
+asswort lautet 2026 und gilt nur f=C3=BCr diese Sendung.
+
+Viele Gr=C3=BC=C3=9Fe
+
+--===============0966472325525269662==
+Content-Type: application/zip
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Unterlagen.zip"
+MIME-Version: 1.0
+
+UEsDBBQAAQAAAMBLdF3gqi0hDgAAAA4AAAAOAAAAVW50ZXJsYWdlbi5wZGYlUERGLTEuNCBkdW1t
+eVBLAQIUAxQAAQAAAMBLdF3gqi0hDgAAAA4AAAAOAAAAAAAAAAAAAACAAQAAAABVbnRlcmxhZ2Vu
+LnBkZlBLBQYAAAAAAQABADwAAAA6AAAAAAA=
+
+--===============0966472325525269662==--

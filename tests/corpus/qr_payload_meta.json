@@ -1,0 +1,19 @@
+{
+  "notes": "The app decodes the QR code on device and sends its content in meta.qr_payloads.",
+  "meta": {
+    "qr_payloads": [
+      "https://microsoft-login.mfa-renew.example/enrol?id=7731"
+    ]
+  },
+  "broker": {
+    "listed": {
+      "microsoft-login.mfa-renew.example": [
+        "certpl"
+      ]
+    }
+  },
+  "expect": [
+    "LINK_FEED_HIT",
+    "LINK_LOOKALIKE"
+  ]
+}

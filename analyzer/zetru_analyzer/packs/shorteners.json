@@ -1,0 +1,10 @@
+{
+  "id": "zetru-shorteners",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "notes": ["URL shorteners: the destination cannot be determined offline (concept §6.5). Exact host match (www. prefix ignored)."],
+  "hosts": [
+    "bit.ly", "bitly.com", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "v.gd", "buff.ly", "rebrand.ly", "cutt.ly", "shorturl.at", "rb.gy", "t.ly", "tiny.cc", "s.id", "bit.do", "lnkd.in", "amzn.to", "amzn.eu", "a.co", "qrco.de", "short.gy", "shorturl.gg", "tr.ee", "linktr.ee", "1drv.ms", "aka.ms", "g.co", "forms.gle", "we.tl", "wa.me", "fb.me", "youtu.be", "spoti.fi", "db.tt", "x.co", "lnk.to", "soo.gd", "clck.ru", "u.to", "urlz.fr", "shorturl.ac", "t1p.de", "kurzlinks.de", "kurzelinks.de"
+  ],
+  "review": ["t1p.de, kurzlinks.de, kurzelinks.de (German shorteners) and shorturl.ac believed active; verify."]
+}

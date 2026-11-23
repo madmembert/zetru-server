@@ -1,0 +1,32 @@
+From: "Buchhaltung" <rechnung@lieferant-beispiel.example>
+To: anna@example.de
+Subject: Ihre Rechnung
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <9@lieferant-beispiel.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============8140319950269164284=="
+
+--===============8140319950269164284==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Guten Tag,
+
+anbei erhalten Sie die Rechnung f=C3=BCr Ihre letzte Bestellung. Bitte pr=C3=
+=BCfen Sie den Anhang und melden Sie sich bei R=C3=BCckfragen gerne bei uns.
+
+Mit freundlichen Gr=C3=BC=C3=9Fen
+
+--===============8140319950269164284==
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Rechnung_2026-118.pdf"
+MIME-Version: 1.0
+
+TVoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAQAAAAFBFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+
+--===============8140319950269164284==--

@@ -1,0 +1,23 @@
+{
+  "id": "zetru-freemail",
+  "version": "1.0.0",
+  "updated": "2026-11-22",
+  "notes": ["Consumer mailbox providers where anyone can register an address. Matched on the full domain of the address."],
+  "domains": [
+    "gmail.com", "googlemail.com",
+    "outlook.com", "outlook.de", "hotmail.com", "hotmail.de", "hotmail.co.uk", "hotmail.fr", "hotmail.it", "hotmail.es", "live.com", "live.de", "live.co.uk", "live.fr", "msn.com",
+    "yahoo.com", "yahoo.de", "yahoo.co.uk", "yahoo.fr", "yahoo.it", "yahoo.es", "ymail.com", "rocketmail.com",
+    "aol.com", "aol.de",
+    "icloud.com", "me.com", "mac.com",
+    "gmx.de", "gmx.net", "gmx.at", "gmx.ch", "gmx.com", "gmx.fr",
+    "web.de", "t-online.de", "freenet.de", "arcor.de", "online.de",
+    "posteo.de", "posteo.net", "mailbox.org",
+    "protonmail.com", "protonmail.ch", "proton.me", "pm.me",
+    "tutanota.com", "tutanota.de", "tuta.io", "tuta.com", "tutamail.com",
+    "zoho.com", "zohomail.com", "zohomail.eu",
+    "yandex.com", "yandex.ru", "mail.ru", "inbox.ru", "list.ru", "bk.ru",
+    "fastmail.com", "fastmail.fm", "mailfence.com", "hushmail.com",
+    "qq.com", "163.com", "126.com", "naver.com"
+  ],
+  "review": ["online.de (1&1 consumer mail) and arcor.de (legacy Vodafone consumer mail) believed consumer mailboxes; fastmail and hushmail are paid personal mailboxes and listed as freemail-like."]
+}

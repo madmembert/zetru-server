@@ -1,0 +1,19 @@
+{
+  "broker": {
+    "dns": {
+      "_dmarc.paypal.com": {
+        "status": "ok",
+        "txt": [
+          "v=DMARC1; p=reject; rua=mailto:d@paypal.com"
+        ]
+      }
+    }
+  },
+  "expect": [
+    "AUTH_DMARC_FAIL_ENFORCED"
+  ],
+  "forbid": [
+    "ID_BRAND_NOT_OFFICIAL",
+    "ID_LOOKALIKE_BRAND"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "expect": [],
+  "max_severity": "info",
+  "forbid": [
+    "CLS_CAT_SPAM"
+  ]
+}

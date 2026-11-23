@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Runtime data and secrets (never commit)
+data/
+secrets/
+*.env
+.env*
+*.pem
+*.key
+models/*.onnx
+!models/.gitkeep

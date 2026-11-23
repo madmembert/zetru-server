@@ -1,0 +1,25 @@
+DKIM-Signature: v=1; a=ed25519-sha256; c=relaxed/relaxed;
+ d=verlag-beispiel.de; i=@verlag-beispiel.de; q=dns/txt; s=news;
+ t=1795390406; h=from : to : subject : date : message-id :
+ list-unsubscribe : list-unsubscribe-post;
+ bh=W8bfyYE7hQjKZYqh9hmjNavSIAMGRGmMcq487y6qp/U=;
+ b=qKFr4TfG+J4vOu9ii3XjFfUhRJ1h1IvGp/9D4nvDTWOLF+cu5P0ROFc+DeKUgoDR/Lgji
+ Wa5H147rn1OisuuBw==
+From: "Verlag Beispiel" <news@verlag-beispiel.de>
+To: anna@example.de
+Subject: Unser =?utf-8?q?Wochenr=C3=BCckblick?=
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <5@verlag-beispiel.de>
+List-Unsubscribe: <https://verlag-beispiel.de/abmelden?u=42>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hallo,
+
+in unserem Wochenr=C3=BCckblick finden Sie die wichtigsten Artikel der Woche,=
+ Tipps f=C3=BCr das Wochenende und neue Rezepte aus der Redaktion. Viel Spa=
+=C3=9F beim Lesen!
+
+https://verlag-beispiel.de/rueckblick

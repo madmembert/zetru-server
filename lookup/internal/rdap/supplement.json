@@ -1,0 +1,17 @@
+{
+  "de": {
+    "urls": [],
+    "no_registration_date": true,
+    "note": "Not in the IANA bootstrap. DENIC's RDAP service (rdap.denic.de) returns no registration event, only 'last changed' (checked 2026-11-23); .de ages are unknown and no query is sent."
+  },
+  "ch": {
+    "urls": [],
+    "no_registration_date": true,
+    "note": "Not in the IANA bootstrap. SWITCH's RDAP service (rdap.nic.ch) returns no events (checked 2026-11-23); .ch ages are unknown and no query is sent."
+  },
+  "io": {
+    "urls": ["https://rdap.identitydigital.services/rdap/"],
+    "no_registration_date": false,
+    "note": "Not in the IANA bootstrap. The registry operator's RDAP service returns a registration event (checked 2026-11-23)."
+  }
+}

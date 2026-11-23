@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "ATT_PDF_ACTIVE"
+  ],
+  "forbid": [
+    "ATT_TYPE_MISMATCH"
+  ]
+}

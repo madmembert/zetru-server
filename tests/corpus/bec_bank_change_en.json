@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "CLS_BANK_CHANGE"
+  ],
+  "forbid": [
+    "CLS_ABSTAIN"
+  ]
+}

@@ -1,0 +1,26 @@
+From: "Voicemail" <voicemail@phone-notify.example>
+To: jane@example.org
+Subject: New voice message (0:42)
+Date: Fri, 20 Nov 2026 09:30:00 +0000
+Message-ID: <13@phone-notify.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============4514322655142957279=="
+
+--===============4514322655142957279==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+You have received a new voice message. The recording is attached to this emai=
+l, open it to listen to the message from your caller.
+
+--===============4514322655142957279==
+Content-Type: image/svg+xml
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="voicemail.svg"
+MIME-Version: 1.0
+
+PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIG9ubG9hZD0ibG9jYXRpb24u
+aHJlZj0naHR0cHM6Ly9ldmlsLmV4YW1wbGUveCciPjxzY3JpcHQ+ZG9jdW1lbnQudGl0bGU9Ingi
+PC9zY3JpcHQ+PHRleHQgeD0iMTAiIHk9IjIwIj5Wb2ljZSBtZXNzYWdlPC90ZXh0Pjwvc3ZnPg==
+
+--===============4514322655142957279==--

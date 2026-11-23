@@ -1,0 +1,30 @@
+{
+  "notes": "Ed25519 DKIM (fixed seed), relaxed/relaxed, covers List-Unsubscribe(-Post); domain publishes p=reject.",
+  "broker": {
+    "dns": {
+      "news._domainkey.verlag-beispiel.de": {
+        "status": "ok",
+        "txt": [
+          "v=DKIM1; k=ed25519; p=A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+        ]
+      },
+      "_dmarc.verlag-beispiel.de": {
+        "status": "ok",
+        "txt": [
+          "v=DMARC1; p=reject"
+        ]
+      }
+    },
+    "popular": [
+      "verlag-beispiel.de"
+    ]
+  },
+  "expect": [
+    "BULK_RFC8058_SIGNED"
+  ],
+  "max_severity": "info",
+  "auth": {
+    "dkim_result": "pass",
+    "dmarc_result": "pass"
+  }
+}

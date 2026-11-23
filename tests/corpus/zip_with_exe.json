@@ -1,0 +1,8 @@
+{
+  "expect": [
+    "ATT_ARCHIVE_RISKY"
+  ],
+  "forbid": [
+    "ATT_ARCHIVE_OPAQUE"
+  ]
+}

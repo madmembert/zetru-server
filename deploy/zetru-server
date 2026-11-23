@@ -1,0 +1,68 @@
+#!/bin/sh
+# zetru-server: operator helper around docker compose for the Zetru analysis server.
+# Run it from anywhere; it works in the directory that holds docker-compose.yml.
+#
+#   ./zetru-server up                       build and start (profile from .env)
+#   ./zetru-server down | status | logs [service]
+#   ./zetru-server init --name "Home" --url https://192.168.1.20:8443 [--url ...]
+#   ./zetru-server pair --tenant default
+#   ./zetru-server devices | revoke <device-id> | rotate-tls [--complete|--activate-backup]
+#   ./zetru-server tenant list | create <name> | delete <name> --yes | policy <name> [...]
+#   ./zetru-server set-urls --url https://... [--url ...]
+#   ./zetru-server backup > zetru-gateway-backup.tar.gz
+#   ./zetru-server restore < zetru-gateway-backup.tar.gz
+set -eu
+
+cd "$(dirname "$0")"
+
+usage() {
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+case "${1:-help}" in
+  help|-h|--help) usage; exit 0 ;;
+esac
+
+profile="${COMPOSE_PROFILES:-}"
+if [ -z "$profile" ] && [ -f .env ]; then
+  profile="$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1 | tr -d '"'"'"' ')"
+fi
+case "$profile" in
+  pi|vps) ;;
+  *) echo "zetru-server: set COMPOSE_PROFILES=pi or COMPOSE_PROFILES=vps in $(pwd)/.env (see env.example)" >&2; exit 2 ;;
+esac
+export COMPOSE_PROFILES="$profile"
+gateway="gateway-$profile"
+volume="zetru_gateway-data"
+# Pinned by digest (GO-06): this container reads the private keys during backup and restore.
+# deploy/pin-images.sh update refreshes it.
+alpine="alpine:3.22.8@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f"
+
+running() {
+  docker compose ps --status running --services 2>/dev/null | grep -qx "$1"
+}
+
+cmd="${1:-help}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  up)      exec docker compose up -d --build ;;
+  down)    exec docker compose down ;;
+  status)  exec docker compose ps ;;
+  logs)    exec docker compose logs --tail=200 "$@" ;;
+  init|pair|devices|revoke|rotate-tls|tenant|set-urls)
+    if running "$gateway"; then
+      exec docker compose exec "$gateway" /usr/local/bin/zetru-gateway "$cmd" "$@"
+    else
+      exec docker compose run --rm --no-deps "$gateway" "$cmd" "$@"
+    fi ;;
+  backup)
+    # Keys, registry and configuration. Request logs and counters are left out on purpose
+    # (retention 14 and 30 days, concept §14.2). The archive contains the server's private keys.
+    if [ -t 1 ]; then echo "zetru-server: redirect the backup to a file" >&2; exit 2; fi
+    exec docker run --rm --network none --user 10001:10001 -v "$volume":/data:ro "$alpine" \
+      tar czf - -C /data --exclude=./logs --exclude=./state --exclude=./.registry.lock --exclude=./.keys.lock . ;;
+  restore)
+    if running "$gateway"; then echo "zetru-server: stop the server first (./zetru-server down)" >&2; exit 2; fi
+    exec docker run --rm -i --network none --user 10001:10001 -v "$volume":/data "$alpine" tar xzf - -C /data ;;
+  *) usage >&2; exit 2 ;;
+esac
