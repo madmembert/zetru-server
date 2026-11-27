@@ -53,7 +53,7 @@ Zetru is a mail app for iPhone and iPad that treats every incoming mail as unver
 - No server-side mailbox access, no credential-holding push relay operated by the vendor.
 - No AI summaries, no smart categories as default experience, no read receipts.
 - No live fetching of URLs from mails by the server (no redirect resolution, no landing-page inspection, no BIMI/VMC fetch, no unsubscribe calls).
-- No OAuth accounts (Gmail/Microsoft) in the MVP; planned directly after (section 15).
+- No provider web sign-in other than Google and Microsoft OAuth (both in v1 since the 2026-11-27 decision, section 12.1 and milestone M6b); every other provider uses its IMAP/SMTP password or an app password.
 - No OpenPGP, no S/MIME encryption in v1 (S/MIME signature display is "later").
 - No Hailo/NPU acceleration ([R-Model] §7.8).
 
@@ -67,7 +67,7 @@ Zetru is a mail app for iPhone and iPad that treats every incoming mail as unver
 |---|---|---|
 | A1 | The user's money, credentials and identity documents (what attackers ultimately want) | Outside Zetru; protected by gating and information |
 | A2 | Mail content (bodies, attachments, headers) | Provider mailbox; device cache; transiently in server RAM |
-| A3 | Mail account credentials (IMAP/SMTP passwords, later OAuth tokens) | Device Keychain only |
+| A3 | Mail account credentials (IMAP/SMTP passwords, app passwords, OAuth refresh and access tokens for Google and Microsoft) | Device Keychain only |
 | A4 | The user's correspondence graph and per-account profile | Device database only |
 | A5 | Integrity of the score, verdict and gates | Device (authoritative), server (advisory, lowering only) |
 | A6 | Device key and pairing material | Secure Enclave / Keychain |
@@ -1234,7 +1234,7 @@ A mail the server cannot parse is not an error: the response is `200` with `comp
 
 **MVP (v1.0)**
 
-- Accounts: multiple IMAP/SMTP accounts, autoconfiguration, app-password guidance (iCloud, Gmail, Yahoo, GMX/WEB.DE), special-use folder detection.
+- Accounts: multiple IMAP/SMTP accounts; OAuth2 sign-in for Gmail (Google) and Microsoft (Outlook.com, Hotmail, Live, Microsoft 365) with XOAUTH2 for IMAP and SMTP, tokens only in the device Keychain (decision 2026-11-27: Outlook.com refuses password IMAP entirely, Gmail otherwise works only with an app password); bundled server presets for the common German providers (GMX, WEB.DE, T-Online, freenet, 1&1/IONOS, Vodafone, mail.de, Posteo, mailbox.org, plus iCloud, Yahoo, AOL), each verified against the provider's official help page, so no third-party autoconfig lookup learns the user's mail domain; provider-specific setup hints (enable IMAP first for GMX/WEB.DE, app passwords for iCloud/Yahoo/AOL); HTTPS autoconfiguration as fallback; special-use folder detection.
 - Mailboxes: unified inbox, per-account folders, conversation threading, pull to refresh, offline cache, persistent outbox with retry.
 - Reading: safe HTML rendering, plain-text view, quoted-text folding, remote content blocked by default with per-sender allow, tracker count, dark mode respecting the mail's own styles.
 - Zetru layer: verdict, score, chips, cards, findings sheet, link/phone/QR/attachment gates, Screener view for first contacts (optional filter, never hides mail), report phishing/spam (moves to Junk), block sender, safe unsubscribe.
@@ -1246,7 +1246,7 @@ A mail the server cannot parse is not an error: the response is `200` with `comp
 - Privacy/security: Face ID / Touch ID app lock, app-switcher privacy screen, Keychain storage, no analytics SDK.
 - Platform: iPhone and iPad layouts, keyboard shortcuts and pointer support on iPad, `mailto:` handling, German and English, Dynamic Type, VoiceOver.
 
-**Later (ordered)**: OAuth for Gmail and Microsoft 365; vendor-hosted analysis service with App Attest; wake-only push relay and Notification Service Extension; snooze; send later (local, with honest "Zetru must be opened" behaviour); rules/Sieve; calendar invites; S/MIME signature display; widgets, App Intents, Spotlight; iPad multi-window and drag and drop; share extension.
+**Later (ordered)**: vendor-hosted analysis service with App Attest; wake-only push relay and Notification Service Extension; snooze; send later (local, with honest "Zetru must be opened" behaviour); rules/Sieve; calendar invites; S/MIME signature display; widgets, App Intents, Spotlight; iPad multi-window and drag and drop; share extension.
 
 ### 12.2 Navigation and screens
 
@@ -1451,9 +1451,10 @@ Order is chosen so that the app is a usable mail client after M2 and a protectiv
 | M4 | **Authentication evidence and profile** | Provider profiles (verified on fixtures), trusted A-R extraction, on-device DKIM verifier, contact tiers, cold-start bootstrap, per-contact and account baselines, thread index, baseline signals and combinations that need no server | DKIM verifier passes RFC 6376 test vectors and ≥ 200 real signed fixture mails (rsa and ed25519, both canonicalisations) with zero false passes on tampered variants; forged A-R below the boundary is flagged for each profile; tier transitions unit-tested; a simulated hijacked-contact mail scores ≤ 24 |
 | M5 | **Server core and channel** | `gateway` (enrol, signing, replay cache, rate limits, registry, response signing), `analyzer` supervisor + sandboxed worker (parse, DKIM re-verify, DMARC RFC 9989, attachments, hidden text, URL feed checks), `resolver`, `updater` with default feeds, compose profiles `pi`/`vps`, CLI (`init`, `pair`, `revoke`, `rotate-tls`); app: pairing, pinning, consent, three modes, queue, merge with monotonic rules | End-to-end analysis on a Pi 5 within the 6 s p95 budget; replayed, unsigned, stale and wrong-pin requests are rejected (integration tests); a response that tries to remove a local signal, raise the ceiling or reference a foreign URL has no such effect (app tests); analyzer container has no route to the internet (test from inside); worker cannot open sockets or files (seccomp test); nothing mail-derived appears in logs or on disk (grep test over volumes after 1,000 mails) |
 | M6 | **Typed decisions and intelligence** | `inference` with `/v1/systemone` and the `rules` backend (German and English), state renderer, `CLS_*` signals and combinations, `lookup` (RDAP), campaign fingerprints, `/v1/report`, `/v1/url/check` and time-of-click integration, optional backend plumbing (all off) | Rule tier unit tests per question and language (≥ 30 positive and ≥ 30 negative snippets each); abstention for other languages; the end-to-end corpus meets the pipeline gates of 9.6 or deviations are documented with examples; `LINK_FEED_HIT` at click time upgrades a G1 sheet to G3 |
+| M6b | **Account sign-in for v1** (added 2026-11-27) | OAuth2 for Google and Microsoft (system browser via `ASWebAuthenticationSession` with PKCE, XOAUTH2 for IMAP and SMTP, refresh, Keychain storage, consumer and work/school Microsoft accounts); verified presets and setup hints for the common German providers | Sign-in, sync, send and token refresh tested with real Gmail, Outlook.com and Microsoft 365 accounts; every preset entry carries the official source URL and check date; setup never offers a password field to an OAuth-only provider |
 | M7 | **Hardening and release quality** | Fuzzing (MIME parser, DKIM, analyze framing, gateway), security review, Pi and VPS benchmarks, seed calibration of the rule tier, notifications with verdict-dependent content, app lock, background refresh tuning, accessibility audit, iPad keyboard/pointer polish, localisation review, privacy texts, install guide | 24 h fuzzing without crash or sandbox escape; benchmark report committed; VoiceOver walkthrough of all gates; German copy reviewed by a native speaker; App Store review checklist (4.8, 5.1.1(v), 5.1.2(i), 2.5.4) complete |
 | M8 | **Trained encoder** | Licence ledger, data collection and annotation, mmBERT fine-tuning, ONNX int8 export, calibration, shadow mode, release | All gates of 9.6 met on real German and English test sets; shadow-mode comparison against `rules` documented |
-| M9 | **After v1** | OAuth (Gmail, Microsoft 365), vendor-hosted service with App Attest and anonymous tenants, wake-only push + Notification Service Extension, remaining "later" features | Separate concept addendum per item |
+| M9 | **After v1** | Vendor-hosted service with App Attest and anonymous tenants, wake-only push + Notification Service Extension, remaining "later" features | Separate concept addendum per item |
 
 ### Test strategy
 
@@ -1494,3 +1495,4 @@ Order is chosen so that the app is a usable mail client after M2 and a protectiv
 | 18 | Abuse of reports | Malicious tenants could poison campaign counters | Distinct-tenant thresholds; reports only lower trust; per-device report limits (50/day) |
 | 19 | Mail larger than 20 MB | Padding avoids server analysis | Cap 60 applies; all on-device checks apply; consider header-plus-descriptor submission later |
 | 20 | Scope | The MVP list is large for one release | The milestone order allows shipping M1–M4 as a TestFlight build with on-device protection only |
+| 21 | OAuth provider approval | Gmail's IMAP/SMTP scope (`https://mail.google.com/`) is a restricted Google scope: production use needs app verification and possibly a recurring security assessment; Microsoft needs an Entra app registration with publisher verification | Start both registrations early in M6b; until Google approval, test users only (up to 100 in testing mode); the on-device design (tokens never leave the device, no vendor server touches mail) is the core of the assessment answers |
