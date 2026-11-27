@@ -218,7 +218,9 @@ class Supervisor:
         psl = self.feeds.feeds.get("psl")
         self._psl_version = psl.info.version if psl else None
         self.zygote.start()
-        asyncio.get_running_loop().create_task(self._maintenance())
+        # Keep a strong reference: the event loop holds tasks only weakly, and an unreferenced pending task
+        # can be garbage-collected mid-run ("Task was destroyed but it is pending").
+        self._maintenance_task = asyncio.get_running_loop().create_task(self._maintenance())
 
     async def _maintenance(self) -> None:
         while True:

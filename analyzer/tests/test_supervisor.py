@@ -147,6 +147,9 @@ class FakeZygote:
     def __init__(self, behaviour, exit_reason="ok"):
         self.behaviour = behaviour
         self.exit_reason = exit_reason
+        # Strong references to the fake workers: the loop keeps tasks only weakly, and under GC pressure (a long
+        # test run) an unreferenced task was destroyed mid-run, so the supervisor saw a vanished worker.
+        self.tasks: set[asyncio.Task] = set()
 
     def alive(self):
         return True
@@ -167,7 +170,9 @@ class FakeZygote:
                 writer.close()
                 exited.set_result({"op": "exit", "id": job_id, "reason": self.exit_reason})
 
-        loop.create_task(run())
+        task = loop.create_task(run())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
         return exited
 
 
