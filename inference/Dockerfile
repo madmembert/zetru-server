@@ -23,7 +23,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN python -m pip uninstall -y pip setuptools wheel >/dev/null 2>&1 || true
 COPY --from=build /install /usr/local
 COPY --from=build /app /app
-RUN mkdir -p /models && chmod 0755 /models
+# Owned by the updater (uid 10005), its only writer: whichever container mounts the empty named volume
+# first hands its directory owner to the volume, so every image must agree (deploycheck test).
+RUN mkdir -p /models && chown 10005:10005 /models && chmod 0755 /models
 USER 10003:10003
 WORKDIR /app
 EXPOSE 8082

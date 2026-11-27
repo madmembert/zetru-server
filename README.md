@@ -332,6 +332,10 @@ Check reachability from another machine: `curl -k https://<host>:8443/healthz` m
   concurrent analyses (2 per device, half of the slots per tenant); the app retries after
   `Retry-After`.
 - **Resolver unhealthy.** Outbound DNS (UDP/TCP 53) must be allowed for the host.
+- **Updater keeps restarting with `Permission denied: '/feeds/…'`.** Installations built before
+  2026-11-27 could give the `feeds`/`models` volumes to root (whichever container mounted them first).
+  The volumes only hold downloaded feeds and models, so recreate them:
+  `./zetru-server down && docker volume rm zetru_feeds zetru_models && ./zetru-server up`.
 
 ## Reference
 

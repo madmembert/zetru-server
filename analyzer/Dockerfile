@@ -22,7 +22,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN python -m pip uninstall -y pip setuptools wheel >/dev/null 2>&1 || true
 COPY --from=build /install /usr/local
 COPY --from=build /app /app
-RUN mkdir -p /feeds && chmod 0755 /feeds
+# Owned by the updater (uid 10005), its only writer: whichever container mounts the empty named volume
+# first hands its directory owner to the volume, so every image must agree (deploycheck test).
+RUN mkdir -p /feeds && chown 10005:10005 /feeds && chmod 0755 /feeds
 USER 10002:10002
 WORKDIR /app
 EXPOSE 8081
